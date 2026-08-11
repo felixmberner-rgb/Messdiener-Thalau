@@ -55,8 +55,7 @@
 <body>
     <div id="root"></div>
 
-    <script type="text/babel">
-        const { useState, useEffect, createContext, useContext } = React;
+const { useState, useEffect, createContext, useContext, useCallback } = React;
 
         // --- HILFSFUNKTIONEN (@AppStorage) ---
         function useAppStorage(key, initialValue) {
@@ -87,6 +86,7 @@
             const [ladeStatusText, setLadeStatusText] = useState("");
             const [fehlerMeldung, setFehlerMeldung] = useState(null);
             
+            // Konfiguration
             const [apiKey, setApiKey] = useAppStorage('geminiApiKey', '');
             const [geminiModel, setGeminiModel] = useAppStorage('geminiModel', 'gemini-3.6-flash');
             const [firebaseProjectId, setFirebaseProjectId] = useAppStorage('firebaseProjectId', '');
@@ -102,6 +102,7 @@
             const [pdfFooterTextSuffix, setPdfFooterTextSuffix] = useAppStorage('pdfFooterTextV2', 'Wenn Abwesenheiten jetzt schon bekannt sind, trage sie ganz einfach online ein.');
             const [pdfLinkUrl, setPdfLinkUrl] = useAppStorage('pdfLinkUrl', 'https://forms.gle/nSzhoDgeAhUS4QG16');
 
+            // Daten
             const [gruppen, setGruppen] = useAppStorage('gruppenDaten', [
                 { id: crypto.randomUUID(), name: "A", mitglieder: [] },
                 { id: crypto.randomUUID(), name: "B", mitglieder: [] },
@@ -117,15 +118,191 @@
             const [regelmaessigeAbwesenheiten, setRegelmaessigeAbwesenheiten] = useAppStorage('regelmaessigeAbwesenheitenData', []);
             const [newsItems, setNewsItems] = useAppStorage('newsItemsData', []);
             const [notizen, setNotizen] = useAppStorage('notizenData', []);
+            const [events, setEvents] = useAppStorage('eventsData', []);
+            const [deletedEvents, setDeletedEvents] = useAppStorage('deletedEventsData', []);
+            const [prozessionen, setProzessionen] = useAppStorage('prozessionenData', []);
+            
             const [customGroupDateRanges, setCustomGroupDateRanges] = useAppStorage('customGroupDateRangesData', {});
             const [nextGroup1, setNextGroup1] = useAppStorage('nextGroup1', '');
             const [nextGroup2, setNextGroup2] = useAppStorage('nextGroup2', '');
 
             const [pdfFile, setPdfFile] = useState(null);
+            const [firebaseSyncErfolg, setFirebaseSyncErfolg] = useState(false);
 
+            // ==========================================
+            // MARK: - FIREBASE REST API INTEGRATION
+            // ==========================================
+            const getFbUrl = (docName) => `https://firestore.googleapis.com/v1/projects/${firebaseProjectId.trim()}/databases/(default)/documents/messdiener/${docName}`;
+
+            // 1. STATISTIK
+            const fetchStatistikFromFirebase = async () => {
+                if (!firebaseProjectId.trim()) return;
+                try {
+                    const res = await fetch(getFbUrl('statistik'));
+                    if (!res.ok) throw new Error("Netzwerkfehler");
+                    const data = await res.json();
+                    if (data.fields) {
+                        let newStat = {};
+                        for (const [key, val] of Object.entries(data.fields)) {
+                            newStat[key] = parseInt(val.integerValue);
+                        }
+                        setStatistik(newStat);
+                    }
+                } catch (e) { console.error("Firebase Fetch Fehler:", e); }
+            };
+
+            const syncStatistikToFirebase = async () => {
+                if (!firebaseProjectId.trim()) return;
+                let fields = {};
+                for (const [key, val] of Object.entries(statistik)) {
+                    fields[key] = { integerValue: String(val) };
+                }
+                try {
+                    const res = await fetch(getFbUrl('statistik'), {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ fields })
+                    });
+                    if (res.ok) {
+                        setFirebaseSyncErfolg(true);
+                        setTimeout(() => setFirebaseSyncErfolg(false), 3000);
+                    }
+                } catch (e) { setFehlerMeldung("Firebase Sync Fehler: " + e.message); }
+            };
+
+            // 2. GRUPPEN & NEUE
+            const fetchGruppenFromFirebase = async () => {
+                if (!firebaseProjectId.trim()) return;
+                try {
+                    const res = await fetch(getFbUrl('gruppen'));
+                    const data = await res.json();
+                    if (data.fields) {
+                        if (data.fields.gruppenJson) setGruppen(JSON.parse(data.fields.gruppenJson.stringValue));
+                        if (data.fields.neueMessdienerJson) setNeueMessdiener(JSON.parse(data.fields.neueMessdienerJson.stringValue));
+                    }
+                } catch (e) {}
+            };
+
+            const syncGruppenToFirebase = async () => {
+                if (!firebaseProjectId.trim()) return;
+                const payload = {
+                    fields: {
+                        gruppenJson: { stringValue: JSON.stringify(gruppen) },
+                        neueMessdienerJson: { stringValue: JSON.stringify(neueMessdiener) }
+                    }
+                };
+                await fetch(getFbUrl('gruppen'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            };
+
+            // 3. REGELN
+            const fetchRegelnFromFirebase = async () => {
+                if (!firebaseProjectId.trim()) return;
+                try {
+                    const res = await fetch(getFbUrl('regeln'));
+                    const data = await res.json();
+                    if (data.fields) {
+                        if (data.fields.immerZusammenJson) setImmerZusammen(JSON.parse(data.fields.immerZusammenJson.stringValue));
+                        if (data.fields.nieZusammenJson) setNieZusammen(JSON.parse(data.fields.nieZusammenJson.stringValue));
+                    }
+                } catch (e) {}
+            };
+
+            const syncRegelnToFirebase = async () => {
+                if (!firebaseProjectId.trim()) return;
+                const payload = {
+                    fields: {
+                        immerZusammenJson: { stringValue: JSON.stringify(immerZusammen) },
+                        nieZusammenJson: { stringValue: JSON.stringify(nieZusammen) }
+                    }
+                };
+                await fetch(getFbUrl('regeln'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            };
+
+            // 4. VORMERKUNGEN
+            const fetchVormerkungenFromFirebase = async () => {
+                if (!firebaseProjectId.trim()) return;
+                try {
+                    const res = await fetch(getFbUrl('vormerkungen'));
+                    const data = await res.json();
+                    if (data.fields && data.fields.vormerkungenJson) {
+                        setVormerkungen(JSON.parse(data.fields.vormerkungenJson.stringValue));
+                    }
+                } catch (e) {}
+            };
+
+            const syncVormerkungenToFirebase = async () => {
+                if (!firebaseProjectId.trim()) return;
+                const payload = { fields: { vormerkungenJson: { stringValue: JSON.stringify(vormerkungen) } } };
+                await fetch(getFbUrl('vormerkungen'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            };
+
+            // 5. EVENTS
+            const fetchEventsFromFirebase = async () => {
+                if (!firebaseProjectId.trim()) return;
+                try {
+                    const res = await fetch(getFbUrl('events'));
+                    const data = await res.json();
+                    if (data.fields) {
+                        if (data.fields.eventsJson) setEvents(JSON.parse(data.fields.eventsJson.stringValue));
+                        if (data.fields.deletedEventsJson) setDeletedEvents(JSON.parse(data.fields.deletedEventsJson.stringValue));
+                    }
+                } catch (e) {}
+            };
+
+            const syncEventsToFirebase = async () => {
+                if (!firebaseProjectId.trim()) return;
+                const payload = {
+                    fields: {
+                        eventsJson: { stringValue: JSON.stringify(events) },
+                        deletedEventsJson: { stringValue: JSON.stringify(deletedEvents) }
+                    }
+                };
+                await fetch(getFbUrl('events'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            };
+
+            // 6. PROZESSIONEN
+            const fetchProzessionenFromFirebase = async () => {
+                if (!firebaseProjectId.trim()) return;
+                try {
+                    const res = await fetch(getFbUrl('prozessionen'));
+                    const data = await res.json();
+                    if (data.fields && data.fields.prozessionenJson) {
+                        setProzessionen(JSON.parse(data.fields.prozessionenJson.stringValue));
+                    }
+                } catch (e) {}
+            };
+
+            const syncProzessionenToFirebase = async () => {
+                if (!firebaseProjectId.trim()) return;
+                const payload = { fields: { prozessionenJson: { stringValue: JSON.stringify(prozessionen) } } };
+                await fetch(getFbUrl('prozessionen'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            };
+
+            // Auto-Sync Hooks (Debounced)
+            useEffect(() => { const t = setTimeout(() => syncGruppenToFirebase(), 1000); return () => clearTimeout(t); }, [gruppen, neueMessdiener]);
+            useEffect(() => { const t = setTimeout(() => syncRegelnToFirebase(), 1000); return () => clearTimeout(t); }, [immerZusammen, nieZusammen]);
+            useEffect(() => { const t = setTimeout(() => syncVormerkungenToFirebase(), 1000); return () => clearTimeout(t); }, [vormerkungen]);
+            useEffect(() => { const t = setTimeout(() => syncEventsToFirebase(), 1000); return () => clearTimeout(t); }, [events, deletedEvents]);
+            useEffect(() => { const t = setTimeout(() => syncProzessionenToFirebase(), 1000); return () => clearTimeout(t); }, [prozessionen]);
+
+            // Initiale Lade-Simulation & Fetch
             useEffect(() => {
-                setTimeout(() => setIsAppLoading(false), 800); 
-            }, []);
+                const loadAll = async () => {
+                    await fetchStatistikFromFirebase();
+                    await fetchGruppenFromFirebase();
+                    await fetchRegelnFromFirebase();
+                    await fetchVormerkungenFromFirebase();
+                    await fetchEventsFromFirebase();
+                    await fetchProzessionenFromFirebase();
+                    setTimeout(() => setIsAppLoading(false), 500); 
+                };
+                if(firebaseProjectId) loadAll();
+                else setTimeout(() => setIsAppLoading(false), 800); 
+            }, [firebaseProjectId]);
+
+            // ==========================================
+            // MARK: - LOGIK & HELPER
+            // ==========================================
 
             const toggleNeu = (name) => {
                 setNeueMessdiener(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
@@ -138,7 +315,10 @@
                 const clean = name.trim();
                 if (!clean) return;
                 setGruppen(prev => prev.map(g => (g.id === groupId && !g.mitglieder.includes(clean)) ? { ...g, mitglieder: [...g.mitglieder, clean] } : g));
-                if (statistik[clean] === undefined) setStatistik(prev => ({ ...prev, [clean]: 0 }));
+                if (statistik[clean] === undefined) {
+                    const newStat = { ...statistik, [clean]: 0 };
+                    setStatistik(newStat);
+                }
             };
 
             const normalizeTime = (time) => {
@@ -212,7 +392,6 @@
                 return bloecke;
             };
 
-            // KI Parser
             const leseGottesdienste = async () => {
                 if (!apiKey) { setFehlerMeldung("Bitte hinterlege deinen Gemini API-Key in den Einstellungen."); return; }
                 if (!pdfFile) { setFehlerMeldung("Bitte wähle eine PDF aus."); return; }
@@ -369,8 +548,10 @@
                 pdfGrauerText, setPdfGrauerText, pdfFooterUeberschrift, setPdfFooterUeberschrift, pdfFooterTextSuffix, setPdfFooterTextSuffix, pdfLinkUrl, setPdfLinkUrl,
                 gruppen, setGruppen, toggleNeu, neueMessdiener, removeMitglied, addMitglied, immerZusammen, setImmerZusammen, nieZusammen, setNieZusammen, statistik, setStatistik,
                 dienste, setDienste, vormerkungen, setVormerkungen, regelmaessigeAbwesenheiten, setRegelmaessigeAbwesenheiten, newsItems, setNewsItems, notizen, setNotizen,
+                events, setEvents, prozessionen, setProzessionen,
                 customGroupDateRanges, setCustomGroupDateRanges, nextGroup1, setNextGroup1, nextGroup2, setNextGroup2,
-                pdfFile, setPdfFile, leseGottesdienste, teileEin, resetApp, getChronologischeBloecke
+                pdfFile, setPdfFile, leseGottesdienste, teileEin, resetApp, getChronologischeBloecke,
+                fetchStatistikFromFirebase, syncStatistikToFirebase, firebaseSyncErfolg
             };
 
             return <ViewModelContext.Provider value={value}>{children}</ViewModelContext.Provider>;
@@ -378,7 +559,10 @@
 
         const useViewModel = () => useContext(ViewModelContext);
 
-        // MARK: - UI COMPONENTS (Sidebar)
+        // ==========================================
+        // MARK: - UI COMPONENTS
+        // ==========================================
+        
         function Sidebar() {
             const { activeTab, setActiveTab } = useViewModel();
             const menuItems = [
@@ -451,8 +635,14 @@
                             <p className="text-gray-500 text-lg mt-1">Konfiguriere Schnittstellen, Layouts und Regeln.</p>
                         </div>
                         <SectionBox icon="fa-solid fa-cloud text-blue-500" title="Cloud Synchronisation (Firebase)">
-                            <p className="text-sm text-gray-500 mb-3">Trage hier deine Firestore Projekt-ID ein, um die Statistik live zu synchronisieren.</p>
-                            <input type="text" placeholder="Firebase Projekt-ID (z.B. messdienerplan-b8c62)" className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500" value={vm.firebaseProjectId} onChange={e => vm.setFirebaseProjectId(e.target.value)} />
+                            <p className="text-sm text-gray-500 mb-3">Trage hier deine Firestore Projekt-ID ein, um die Daten live zu synchronisieren.</p>
+                            <input type="text" placeholder="Firebase Projekt-ID (z.B. messdienerplan-b8c62)" className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 mb-4" value={vm.firebaseProjectId} onChange={e => vm.setFirebaseProjectId(e.target.value)} />
+                            <div className="flex items-center space-x-4">
+                                <button onClick={vm.syncStatistikToFirebase} disabled={!vm.firebaseProjectId} className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-bold disabled:opacity-50 transition border border-gray-300">
+                                    <i className="fa-solid fa-arrow-rotate-right mr-2"></i>Jetzt manuell synchronisieren
+                                </button>
+                                {vm.firebaseSyncErfolg && <span className="text-green-500 text-sm font-bold"><i className="fa-solid fa-check mr-1"></i>Erfolgreich</span>}
+                            </div>
                         </SectionBox>
                         <SectionBox icon="fa-solid fa-brain text-purple-500" title="Künstliche Intelligenz & Datenbanken">
                             <div className="grid grid-cols-2 gap-6 mb-4">
@@ -658,10 +848,10 @@
                 </div>
             );
         }
-      // --- STATISTIK VIEW ---
+
+        // --- STATISTIK VIEW ---
         function StatistikView() {
             const vm = useViewModel();
-            // Nach Einsätzen absteigend sortieren
             const orderedNames = Object.keys(vm.statistik).sort((a, b) => vm.statistik[b] - vm.statistik[a]);
 
             return (
@@ -674,7 +864,7 @@
                             </div>
                             <div className="flex space-x-3">
                                 <button className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition"
-                                        onClick={() => alert("Cloud Sync folgt!")}>
+                                        onClick={vm.fetchStatistikFromFirebase}>
                                     <i className="fa-solid fa-cloud-arrow-down mr-2"></i>Aus Cloud laden
                                 </button>
                                 <button className="bg-white border border-gray-300 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition"
@@ -720,10 +910,7 @@
         // --- NOTIZEN VIEW ---
         function NotizenView() {
             const vm = useViewModel();
-            
-            const addNote = () => {
-                vm.setNotizen([{ id: crypto.randomUUID(), titel: "Neue Notiz", inhalt: "" }, ...vm.notizen]);
-            };
+            const addNote = () => vm.setNotizen([{ id: crypto.randomUUID(), titel: "Neue Notiz", inhalt: "" }, ...vm.notizen]);
 
             return (
                 <div className="h-full overflow-y-auto p-10 bg-gray-50/50">
@@ -808,31 +995,18 @@
                         </div>
                         <hr className="mb-8 border-gray-200" />
 
-                        <ToolBox 
-                            icon="fa-solid fa-copy" colorClass="text-blue-500" 
-                            title="Alle Messdiener als Text kopieren" 
+                        <ToolBox icon="fa-solid fa-copy" colorClass="text-blue-500" title="Alle Messdiener als Text kopieren" 
                             desc="Kopiert alle angelegten Messdiener (ohne Gruppen-Zuordnung) als einfache Textliste in die Zwischenablage."
-                            btnText={kopiert ? "Erfolgreich kopiert!" : "Namen kopieren"}
-                            btnIcon={kopiert ? "fa-solid fa-check" : "fa-solid fa-clipboard"}
-                            onClick={handleCopy}
-                            btnClass={kopiert ? "bg-green-500 hover:bg-green-600 text-white" : "bg-blue-600 hover:bg-blue-700 text-white"}
-                        />
-                        <ToolBox 
-                            icon="fa-solid fa-file-pdf" colorClass="text-orange-500" 
-                            title="Gruppen-Liste als PDF exportieren" 
+                            btnText={kopiert ? "Erfolgreich kopiert!" : "Namen kopieren"} btnIcon={kopiert ? "fa-solid fa-check" : "fa-solid fa-clipboard"}
+                            onClick={handleCopy} btnClass={kopiert ? "bg-green-500 hover:bg-green-600 text-white" : "bg-blue-600 hover:bg-blue-700 text-white"} />
+                        
+                        <ToolBox icon="fa-solid fa-file-pdf" colorClass="text-orange-500" title="Gruppen-Liste als PDF exportieren" 
                             desc="Erstellt ein druckfertiges PDF mit allen angelegten Gruppen und den zugeordneten Messdienern."
-                            btnText="PDF herunterladen" btnIcon="fa-solid fa-download"
-                            onClick={() => alert("PDF Export folgt in Phase 4!")}
-                            btnClass="bg-orange-500 hover:bg-orange-600 text-white"
-                        />
-                        <ToolBox 
-                            icon="fa-solid fa-wand-magic-sparkles" colorClass="text-purple-500" 
-                            title="Gruppen per KI aus Zwischenablage importieren" 
+                            btnText="PDF herunterladen" btnIcon="fa-solid fa-download" onClick={() => alert("PDF Export folgt in Phase 4!")} btnClass="bg-orange-500 hover:bg-orange-600 text-white" />
+                        
+                        <ToolBox icon="fa-solid fa-wand-magic-sparkles" colorClass="text-purple-500" title="Gruppen per KI aus Zwischenablage importieren" 
                             desc="Kopiere einen Text mit Gruppen und Namen in deine Zwischenablage. Die KI liest ihn aus und überschreibt deine aktuellen Gruppen."
-                            btnText="Aus Zwischenablage importieren" btnIcon="fa-solid fa-paste"
-                            onClick={() => alert("KI Import folgt!")}
-                            btnClass="bg-purple-600 hover:bg-purple-700 text-white"
-                        />
+                            btnText="Aus Zwischenablage importieren" btnIcon="fa-solid fa-paste" onClick={() => alert("KI Import folgt!")} btnClass="bg-purple-600 hover:bg-purple-700 text-white" />
                     </div>
                 </div>
             );
@@ -867,7 +1041,7 @@
 
                         <hr className="my-10 border-gray-200" />
 
-                        {/* Wöchentliche Abwesenheiten (Mo-So Checkboxen) */}
+                        {/* Wöchentliche Abwesenheiten */}
                         <div className="flex justify-between items-end mb-6">
                             <div>
                                 <h2 className="text-2xl font-bold text-gray-900">Wöchentliche Abwesenheiten</h2>
@@ -913,6 +1087,167 @@
             );
         }
 
+        // --- EVENTS VIEW ---
+        function EventsView() {
+            const vm = useViewModel();
+            const [selectedEventId, setSelectedEventId] = useState(null);
+
+            const sortedEvents = [...vm.events].sort((a, b) => {
+                const d1 = vm.parseDateStr(a.datum) || new Date(0);
+                const d2 = vm.parseDateStr(b.datum) || new Date(0);
+                return d1 - d2;
+            });
+
+            return (
+                <div className="flex h-full w-full">
+                    {/* Sidebar Links */}
+                    <div className="w-[300px] bg-white border-r border-gray-200 flex flex-col h-full shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-10">
+                        <div className="p-6">
+                            <h2 className="text-2xl font-bold text-gray-900 mb-4">Events</h2>
+                            <button onClick={() => {
+                                const newId = crypto.randomUUID();
+                                vm.setEvents([{id: newId, titel: "Neues Event", datum: "01.01.2026", beschreibung: "Details hier eintragen...", isICal: false, ablauf: [], teilnehmer: []}, ...vm.events]);
+                                setSelectedEventId(newId);
+                            }} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium py-2 rounded-lg transition border border-gray-300">
+                                <i className="fa-solid fa-plus mr-2"></i>Event erstellen
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto">
+                            {sortedEvents.length === 0 ? (
+                                <div className="text-center p-6 text-gray-400">
+                                    <i className="fa-solid fa-champagne-glasses text-4xl mb-2 opacity-50"></i>
+                                    <p>Keine Events</p>
+                                </div>
+                            ) : (
+                                <ul className="px-3 space-y-1">
+                                    {sortedEvents.map(event => (
+                                        <li key={event.id}>
+                                            <button onClick={() => setSelectedEventId(event.id)}
+                                                className={`w-full text-left px-4 py-3 rounded-lg transition ${selectedEventId === event.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}>
+                                                <div className="flex justify-between items-center">
+                                                    <span className="font-bold truncate">{event.titel}</span>
+                                                    {event.isICal && <i className="fa-solid fa-cloud text-xs"></i>}
+                                                </div>
+                                                <span className={`text-sm ${selectedEventId === event.id ? 'text-blue-200' : 'text-gray-500'}`}>{event.datum}</span>
+                                            </button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Content Rechts */}
+                    <div className="flex-1 bg-gray-50/50 p-10 overflow-y-auto">
+                        {!selectedEventId ? (
+                            <div className="h-full flex flex-col justify-center items-center text-gray-400">
+                                <i className="fa-solid fa-arrow-pointer text-7xl mb-4 opacity-50"></i>
+                                <p className="text-xl font-medium">Wähle links ein Event aus</p>
+                            </div>
+                        ) : (
+                            <div className="max-w-4xl bg-white rounded-2xl border border-gray-200 p-8 shadow-sm">
+                                {vm.events.filter(e => e.id === selectedEventId).map(event => (
+                                    <div key={event.id}>
+                                        <div className="flex justify-between items-start mb-6">
+                                            <div>
+                                                <input type="text" value={event.titel} onChange={e => vm.setEvents(vm.events.map(ev => ev.id === event.id ? {...ev, titel: e.target.value} : ev))} className="text-4xl font-black text-gray-900 border-none outline-none focus:ring-0 p-0 mb-2 w-full bg-transparent" />
+                                                <input type="text" value={event.datum} onChange={e => vm.setEvents(vm.events.map(ev => ev.id === event.id ? {...ev, datum: e.target.value} : ev))} className="text-xl font-bold text-blue-600 border-none outline-none focus:ring-0 p-0 bg-transparent" />
+                                            </div>
+                                            <button onClick={() => { vm.setEvents(vm.events.filter(e => e.id !== event.id)); setSelectedEventId(null); }} className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-lg font-bold transition">
+                                                <i className="fa-solid fa-trash mr-2"></i>Löschen
+                                            </button>
+                                        </div>
+                                        <textarea value={event.beschreibung} onChange={e => vm.setEvents(vm.events.map(ev => ev.id === event.id ? {...ev, beschreibung: e.target.value} : ev))} className="w-full h-32 bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-700 outline-none focus:border-blue-500 mb-8" placeholder="Event Beschreibung..."></textarea>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // --- PROZESSIONEN VIEW ---
+        function ProzessionenView() {
+            const vm = useViewModel();
+            const [selectedId, setSelectedId] = useState(null);
+
+            const sortedProzessionen = [...vm.prozessionen].sort((a, b) => {
+                const d1 = vm.parseDateStr(a.datum) || new Date(0);
+                const d2 = vm.parseDateStr(b.datum) || new Date(0);
+                return d1 - d2;
+            });
+
+            return (
+                <div className="flex h-full w-full">
+                    {/* Sidebar Links */}
+                    <div className="w-[300px] bg-white border-r border-gray-200 flex flex-col h-full shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-10">
+                        <div className="p-6">
+                            <h2 className="text-2xl font-bold text-gray-900 mb-4">Prozessionen</h2>
+                            <button onClick={() => {
+                                const newId = crypto.randomUUID();
+                                vm.setProzessionen([{id: newId, titel: "Fronleichnam", datum: "01.06.2026", gabenbereitung: ["",""], kollekte: ["",""], flambeaux: ["",""], weihrauch: "", schiffchen: "", kreuz: "", fahneGruenWeiss: ["",""], fahneGelbWeiss1: ["",""], kinderfahnen: ["",""], laternen: ["",""], fahneRotWeiss2: ["",""], hiddenMinis: []}, ...vm.prozessionen]);
+                                setSelectedId(newId);
+                            }} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium py-2 rounded-lg transition border border-gray-300">
+                                <i className="fa-solid fa-plus mr-2"></i>Neu erstellen
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto">
+                            {sortedProzessionen.length === 0 ? (
+                                <div className="text-center p-6 text-gray-400">
+                                    <i className="fa-solid fa-person-walking text-4xl mb-2 opacity-50"></i>
+                                    <p>Keine Prozessionen</p>
+                                </div>
+                            ) : (
+                                <ul className="px-3 space-y-1">
+                                    {sortedProzessionen.map(proz => (
+                                        <li key={proz.id}>
+                                            <button onClick={() => setSelectedId(proz.id)}
+                                                className={`w-full text-left px-4 py-3 rounded-lg transition ${selectedId === proz.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}>
+                                                <div className="font-bold truncate">{proz.titel}</div>
+                                                <div className={`text-sm ${selectedId === proz.id ? 'text-blue-200' : 'text-gray-500'}`}>{proz.datum}</div>
+                                            </button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Content Rechts */}
+                    <div className="flex-1 bg-gray-50/50 p-10 overflow-y-auto">
+                        {!selectedId ? (
+                            <div className="h-full flex flex-col justify-center items-center text-gray-400">
+                                <i className="fa-solid fa-arrow-pointer text-7xl mb-4 opacity-50"></i>
+                                <p className="text-xl font-medium">Wähle links eine Prozession aus</p>
+                            </div>
+                        ) : (
+                            <div className="max-w-4xl bg-white rounded-2xl border border-gray-200 p-8 shadow-sm">
+                                {vm.prozessionen.filter(p => p.id === selectedId).map(proz => (
+                                    <div key={proz.id}>
+                                        <div className="flex justify-between items-start mb-10">
+                                            <div>
+                                                <input type="text" value={proz.titel} onChange={e => vm.setProzessionen(vm.prozessionen.map(pr => pr.id === proz.id ? {...pr, titel: e.target.value} : pr))} className="text-4xl font-black text-gray-900 border-none outline-none focus:ring-0 p-0 mb-2 w-full bg-transparent" />
+                                                <input type="text" value={proz.datum} onChange={e => vm.setProzessionen(vm.prozessionen.map(pr => pr.id === proz.id ? {...pr, datum: e.target.value} : pr))} className="text-xl font-bold text-blue-600 border-none outline-none focus:ring-0 p-0 bg-transparent" />
+                                            </div>
+                                            <button onClick={() => { vm.setProzessionen(vm.prozessionen.filter(p => p.id !== proz.id)); setSelectedId(null); }} className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-lg font-bold transition">
+                                                <i className="fa-solid fa-trash mr-2"></i>Löschen
+                                            </button>
+                                        </div>
+                                        <div className="p-8 border-2 border-dashed border-gray-300 rounded-xl text-center">
+                                            <i className="fa-solid fa-person-digging text-5xl text-gray-300 mb-4"></i>
+                                            <h3 className="text-xl font-bold text-gray-700">Drag & Drop Editor folgt in Kürze</h3>
+                                            <p className="text-gray-500">Das komplexe Web-Layout für die Prozessionsaufstellung und den PDF-Druck wird in der finalen Phase implementiert.</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
         // --- MAIN APP COMPONENT ---
         function App() {
             const { activeTab, isAppLoading } = useViewModel();
@@ -936,23 +1271,14 @@
                     <div className="flex-1 flex flex-col bg-white overflow-hidden shadow-[-4px_0_15px_rgba(0,0,0,0.05)] z-10 relative">
                         {/* AKTIVES ROUTING */}
                         {(!activeTab || activeTab === 'planer') && <PlanerView/>}
-                        {activeTab === 'einstellungen' && <EinstellungenView/>}
-                        {activeTab === 'messdiener' && <MessdienerView/>}
+                        {activeTab === 'prozessionen' && <ProzessionenView/>}
+                        {activeTab === 'events' && <EventsView/>}
+                        {activeTab === 'vormerken' && <VormerkenView/>}
                         {activeTab === 'statistik' && <StatistikView/>}
                         {activeTab === 'notizen' && <NotizenView/>}
                         {activeTab === 'werkzeuge' && <WerkzeugeView/>}
-                        {activeTab === 'vormerken' && <VormerkenView/>}
-                        
-                        {/* Platzhalter für restliche, noch kommende Tabs (Prozessionen, Events) */}
-                        {!['planer', 'einstellungen', 'messdiener', 'statistik', 'notizen', 'werkzeuge', 'vormerken'].includes(activeTab) && (
-                            <div className="flex-1 flex flex-col items-center justify-center p-10 text-center bg-gray-50/50">
-                                <i className="fa-solid fa-person-digging text-7xl text-gray-300 mb-6"></i>
-                                <h1 className="text-4xl font-bold mb-3 capitalize text-gray-800">{activeTab.replace('-', ' ')}</h1>
-                                <p className="text-gray-500 text-lg max-w-md">
-                                    Dieser Bereich folgt im allerletzten Schritt (inkl. PDF Export Engine)!
-                                </p>
-                            </div>
-                        )}
+                        {activeTab === 'messdiener' && <MessdienerView/>}
+                        {activeTab === 'einstellungen' && <EinstellungenView/>}
                     </div>
                 </div>
             );
