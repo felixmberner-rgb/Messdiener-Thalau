@@ -658,7 +658,263 @@
                 </div>
             );
         }
-      function App() {
+      // --- STATISTIK VIEW ---
+        function StatistikView() {
+            const vm = useViewModel();
+            // Nach Einsätzen absteigend sortieren
+            const orderedNames = Object.keys(vm.statistik).sort((a, b) => vm.statistik[b] - vm.statistik[a]);
+
+            return (
+                <div className="h-full overflow-y-auto p-10 bg-gray-50/50">
+                    <div className="max-w-4xl">
+                        <div className="flex justify-between items-end mb-8">
+                            <div>
+                                <h1 className="text-3xl font-bold text-gray-900">Einsatz-Statistik</h1>
+                                <p className="text-gray-500 text-lg mt-1">Übersicht aller Einsätze für eine faire Verteilung.</p>
+                            </div>
+                            <div className="flex space-x-3">
+                                <button className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition"
+                                        onClick={() => alert("Cloud Sync folgt!")}>
+                                    <i className="fa-solid fa-cloud-arrow-down mr-2"></i>Aus Cloud laden
+                                </button>
+                                <button className="bg-white border border-gray-300 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition"
+                                        onClick={() => {
+                                            if(confirm("Alle Zähler auf 0 setzen? Die Personen bleiben erhalten.")) {
+                                                let neu = {};
+                                                vm.gruppen.forEach(g => g.mitglieder.forEach(m => neu[m] = 0));
+                                                vm.setStatistik(neu);
+                                            }
+                                        }}>
+                                    <i className="fa-solid fa-arrow-rotate-left mr-2"></i>Zähler nullen
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-10">
+                            <div className="flex justify-between items-center px-10 py-4 border-b border-gray-100 bg-gray-50">
+                                <span className="font-semibold text-gray-500 uppercase tracking-wider text-sm">Messdiener</span>
+                                <span className="font-semibold text-gray-500 uppercase tracking-wider text-sm">Einsätze</span>
+                            </div>
+                            <div className="divide-y divide-gray-100">
+                                {orderedNames.map((name, idx) => (
+                                    <div key={name} className={`flex justify-between items-center px-10 py-4 ${idx % 2 === 0 ? 'bg-blue-50/20' : 'bg-white'}`}>
+                                        <span className="font-semibold text-gray-800 text-lg">{name}</span>
+                                        <div className="flex items-center space-x-6">
+                                            <span className="text-2xl font-bold text-gray-900 w-8 text-right font-mono">{vm.statistik[name]}</span>
+                                            <div className="flex space-x-2">
+                                                <button onClick={() => vm.setStatistik({...vm.statistik, [name]: Math.max(0, vm.statistik[name] - 1)})} 
+                                                        className="text-red-500 hover:text-red-600 text-2xl transition"><i className="fa-solid fa-circle-minus"></i></button>
+                                                <button onClick={() => vm.setStatistik({...vm.statistik, [name]: vm.statistik[name] + 1})} 
+                                                        className="text-green-500 hover:text-green-600 text-2xl transition"><i className="fa-solid fa-circle-plus"></i></button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // --- NOTIZEN VIEW ---
+        function NotizenView() {
+            const vm = useViewModel();
+            
+            const addNote = () => {
+                vm.setNotizen([{ id: crypto.randomUUID(), titel: "Neue Notiz", inhalt: "" }, ...vm.notizen]);
+            };
+
+            return (
+                <div className="h-full overflow-y-auto p-10 bg-gray-50/50">
+                    <div className="max-w-6xl">
+                        <div className="flex justify-between items-end mb-8">
+                            <div>
+                                <h1 className="text-3xl font-bold text-gray-900">Notizen</h1>
+                                <p className="text-gray-500 text-lg mt-1">Dein persönlicher Merkzettel für den Messdienerplan.</p>
+                            </div>
+                            <button onClick={addNote} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition">
+                                <i className="fa-solid fa-plus mr-2"></i>Notiz hinzufügen
+                            </button>
+                        </div>
+
+                        {vm.notizen.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-64 text-gray-400">
+                                <i className="fa-regular fa-note-sticky text-6xl mb-4 opacity-50"></i>
+                                <p className="text-lg">Keine Notizen vorhanden.</p>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 pb-10">
+                                {vm.notizen.map(note => (
+                                    <div key={note.id} className="bg-yellow-100/60 rounded-2xl border border-yellow-200 p-6 shadow-sm relative group hover:shadow-md transition duration-200">
+                                        <div className="flex justify-between items-center mb-3">
+                                            <input type="text" value={note.titel} 
+                                                onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, titel: e.target.value} : n))}
+                                                className="font-bold text-xl bg-transparent border-none focus:ring-0 w-full text-gray-800 outline-none placeholder-gray-400" placeholder="Titel..." />
+                                            <button onClick={() => vm.setNotizen(vm.notizen.filter(n => n.id !== note.id))} 
+                                                    className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition duration-200">
+                                                <i className="fa-solid fa-trash"></i>
+                                            </button>
+                                        </div>
+                                        <hr className="border-yellow-300 mb-4" />
+                                        <textarea value={note.inhalt} 
+                                            onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, inhalt: e.target.value} : n))}
+                                            placeholder="Hier Notizen eintragen..."
+                                            className="w-full h-48 bg-transparent border-none resize-none focus:ring-0 text-gray-700 outline-none text-base leading-relaxed"></textarea>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // --- WERKZEUGE VIEW ---
+        function WerkzeugeView() {
+            const vm = useViewModel();
+            const [kopiert, setKopiert] = useState(false);
+            
+            const handleCopy = () => {
+                const alle = vm.gruppen.flatMap(g => g.mitglieder).sort().join("\n");
+                navigator.clipboard.writeText(alle);
+                setKopiert(true);
+                setTimeout(() => setKopiert(false), 2000);
+            };
+
+            const ToolBox = ({ icon, title, desc, btnText, btnIcon, onClick, colorClass, btnClass }) => (
+                <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm mb-6 flex flex-col justify-between">
+                    <div>
+                        <div className="flex items-center space-x-3 mb-2">
+                            <i className={`${icon} ${colorClass} text-2xl w-8 text-center`}></i>
+                            <h2 className="text-xl font-bold text-gray-800">{title}</h2>
+                        </div>
+                        <p className="text-gray-500 mb-5 ml-11">{desc}</p>
+                    </div>
+                    <div className="ml-11">
+                        <button onClick={onClick} className={`${btnClass} px-4 py-2 rounded-lg text-sm font-bold shadow-sm transition flex items-center`}>
+                            <i className={`${btnIcon} mr-2`}></i>{btnText}
+                        </button>
+                    </div>
+                </div>
+            );
+
+            return (
+                <div className="h-full overflow-y-auto p-10 bg-gray-50/50">
+                    <div className="max-w-3xl">
+                        <div className="mb-8">
+                            <h1 className="text-3xl font-bold text-gray-900">Werkzeuge</h1>
+                            <p className="text-gray-500 text-lg mt-1">Nützliche Tools für den Messdiener-Alltag.</p>
+                        </div>
+                        <hr className="mb-8 border-gray-200" />
+
+                        <ToolBox 
+                            icon="fa-solid fa-copy" colorClass="text-blue-500" 
+                            title="Alle Messdiener als Text kopieren" 
+                            desc="Kopiert alle angelegten Messdiener (ohne Gruppen-Zuordnung) als einfache Textliste in die Zwischenablage."
+                            btnText={kopiert ? "Erfolgreich kopiert!" : "Namen kopieren"}
+                            btnIcon={kopiert ? "fa-solid fa-check" : "fa-solid fa-clipboard"}
+                            onClick={handleCopy}
+                            btnClass={kopiert ? "bg-green-500 hover:bg-green-600 text-white" : "bg-blue-600 hover:bg-blue-700 text-white"}
+                        />
+                        <ToolBox 
+                            icon="fa-solid fa-file-pdf" colorClass="text-orange-500" 
+                            title="Gruppen-Liste als PDF exportieren" 
+                            desc="Erstellt ein druckfertiges PDF mit allen angelegten Gruppen und den zugeordneten Messdienern."
+                            btnText="PDF herunterladen" btnIcon="fa-solid fa-download"
+                            onClick={() => alert("PDF Export folgt in Phase 4!")}
+                            btnClass="bg-orange-500 hover:bg-orange-600 text-white"
+                        />
+                        <ToolBox 
+                            icon="fa-solid fa-wand-magic-sparkles" colorClass="text-purple-500" 
+                            title="Gruppen per KI aus Zwischenablage importieren" 
+                            desc="Kopiere einen Text mit Gruppen und Namen in deine Zwischenablage. Die KI liest ihn aus und überschreibt deine aktuellen Gruppen."
+                            btnText="Aus Zwischenablage importieren" btnIcon="fa-solid fa-paste"
+                            onClick={() => alert("KI Import folgt!")}
+                            btnClass="bg-purple-600 hover:bg-purple-700 text-white"
+                        />
+                    </div>
+                </div>
+            );
+        }
+
+        // --- VORMERKEN VIEW ---
+        function VormerkenView() {
+            const vm = useViewModel();
+            const wochentage = [{id: 2, n: 'Mo'}, {id: 3, n: 'Di'}, {id: 4, n: 'Mi'}, {id: 5, n: 'Do'}, {id: 6, n: 'Fr'}, {id: 7, n: 'Sa'}, {id: 1, n: 'So'}];
+
+            return (
+                <div className="h-full overflow-y-auto p-10 bg-gray-50/50">
+                    <div className="max-w-5xl">
+                        <div className="flex justify-between items-end mb-8">
+                            <div>
+                                <h1 className="text-3xl font-bold text-gray-900">Vorgemerkte Messdiener</h1>
+                                <p className="text-gray-500 text-lg mt-1">Plane Messdiener im Vorfeld für spezielle Gottesdienste ein.</p>
+                            </div>
+                            <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition"
+                                onClick={() => alert("Detail-Editor für Vormerkungen folgt!")}>
+                                <i className="fa-solid fa-plus mr-2"></i>Vormerkung hinzufügen
+                            </button>
+                        </div>
+                        
+                        {vm.vormerkungen.length === 0 && (
+                            <div className="flex flex-col items-center justify-center p-12 text-center text-gray-400 bg-white rounded-xl border border-gray-200 border-dashed mb-10">
+                                <i className="fa-regular fa-calendar-check text-6xl mb-4 opacity-50"></i>
+                                <h3 className="text-xl font-bold text-gray-600">Keine Vormerkungen vorhanden.</h3>
+                                <p className="mt-2 max-w-md">Sobald du hier Gottesdienste anlegst, werden die eingetragenen Personen beim Berechnen des Plans automatisch fest eingeteilt.</p>
+                            </div>
+                        )}
+
+                        <hr className="my-10 border-gray-200" />
+
+                        {/* Wöchentliche Abwesenheiten (Mo-So Checkboxen) */}
+                        <div className="flex justify-between items-end mb-6">
+                            <div>
+                                <h2 className="text-2xl font-bold text-gray-900">Wöchentliche Abwesenheiten</h2>
+                                <p className="text-gray-500 mt-1">Personen, die an bestimmten Wochentagen nie können.</p>
+                            </div>
+                            <button onClick={() => vm.setRegelmaessigeAbwesenheiten([...vm.regelmaessigeAbwesenheiten, { id: crypto.randomUUID(), name: '', wochentage: [] }])}
+                                className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition">
+                                <i className="fa-solid fa-plus mr-2"></i>Person hinzufügen
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-10">
+                            {vm.regelmaessigeAbwesenheiten.map(regel => (
+                                <div key={regel.id} className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                                    <div className="flex justify-between items-center mb-6">
+                                        <input type="text" placeholder="Name der Person..." value={regel.name}
+                                            onChange={e => vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.map(r => r.id === regel.id ? {...r, name: e.target.value} : r))}
+                                            className="font-bold text-lg border-b border-gray-300 focus:border-blue-500 outline-none w-2/3 bg-transparent pb-1" />
+                                        <button onClick={() => vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.filter(r => r.id !== regel.id))} className="text-gray-400 hover:text-red-500 transition">
+                                            <i className="fa-solid fa-trash"></i>
+                                        </button>
+                                    </div>
+                                    <div className="flex justify-between space-x-1">
+                                        {wochentage.map(tag => {
+                                            const isActive = regel.wochentage.includes(tag.id);
+                                            return (
+                                                <button key={tag.id}
+                                                    onClick={() => {
+                                                        const newTage = isActive ? regel.wochentage.filter(t => t !== tag.id) : [...regel.wochentage, tag.id];
+                                                        vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.map(r => r.id === regel.id ? {...r, wochentage: newTage} : r));
+                                                    }}
+                                                    className={`w-10 h-10 rounded-lg font-bold text-sm transition-all duration-200 shadow-sm ${isActive ? 'bg-orange-500 text-white scale-105' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                                                    {tag.n}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // --- MAIN APP COMPONENT ---
+        function App() {
             const { activeTab, isAppLoading } = useViewModel();
 
             if (isAppLoading) {
@@ -678,16 +934,22 @@
                     <Sidebar/>
                     
                     <div className="flex-1 flex flex-col bg-white overflow-hidden shadow-[-4px_0_15px_rgba(0,0,0,0.05)] z-10 relative">
+                        {/* AKTIVES ROUTING */}
                         {(!activeTab || activeTab === 'planer') && <PlanerView/>}
                         {activeTab === 'einstellungen' && <EinstellungenView/>}
                         {activeTab === 'messdiener' && <MessdienerView/>}
+                        {activeTab === 'statistik' && <StatistikView/>}
+                        {activeTab === 'notizen' && <NotizenView/>}
+                        {activeTab === 'werkzeuge' && <WerkzeugeView/>}
+                        {activeTab === 'vormerken' && <VormerkenView/>}
                         
-                        {!['planer', 'einstellungen', 'messdiener'].includes(activeTab) && (
+                        {/* Platzhalter für restliche, noch kommende Tabs (Prozessionen, Events) */}
+                        {!['planer', 'einstellungen', 'messdiener', 'statistik', 'notizen', 'werkzeuge', 'vormerken'].includes(activeTab) && (
                             <div className="flex-1 flex flex-col items-center justify-center p-10 text-center bg-gray-50/50">
                                 <i className="fa-solid fa-person-digging text-7xl text-gray-300 mb-6"></i>
                                 <h1 className="text-4xl font-bold mb-3 capitalize text-gray-800">{activeTab.replace('-', ' ')}</h1>
                                 <p className="text-gray-500 text-lg max-w-md">
-                                    Dieser Bereich folgt im nächsten Schritt! 
+                                    Dieser Bereich folgt im allerletzten Schritt (inkl. PDF Export Engine)!
                                 </p>
                             </div>
                         )}
@@ -695,6 +957,12 @@
                 </div>
             );
         }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<ViewModelProvider><App/></ViewModelProvider>);
+    </script>
+</body>
+</html>
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<ViewModelProvider><App/></ViewModelProvider>);
