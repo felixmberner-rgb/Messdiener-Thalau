@@ -4,23 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Messdiener Planer</title>
-    
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-        tailwind.config = {
-            theme: { extend: { colors: { macBg: '#ececec', macSidebar: '#f5f5f5', macActive: '#007aff', macText: '#1d1d1f' }, fontFamily: { sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'] } } }
-        }
+        tailwind.config = { theme: { extend: { colors: { macBg: '#ececec', macSidebar: '#f5f5f5', macActive: '#007aff', macText: '#1d1d1f' }, fontFamily: { sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'] } } } }
     </script>
-
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-
     <style>
-        /* Der Body darf scrollen, damit das Portal auf Handys funktioniert! */
         body { margin: 0; background-color: #ececec; -webkit-font-smoothing: antialiased; }
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -36,37 +29,19 @@
     <script type="text/babel">
         const { useState, useEffect, createContext, useContext, useRef } = React;
 
-        // ==========================================
-        // 1. HILFSFUNKTIONEN & PROVIDER
-        // ==========================================
         function useAppStorage(key, initialValue) {
-            const [state, setState] = useState(() => {
-                try { const item = window.localStorage.getItem(key); return item ? JSON.parse(item) : initialValue; } 
-                catch (error) { return initialValue; }
-            });
-            useEffect(() => { window.localStorage.setItem(key, JSON.stringify(state)); }, [key, state]);
-            return [state, setState];
+            const [state, setState] = useState(() => { try { const item = window.localStorage.getItem(key); return item ? JSON.parse(item) : initialValue; } catch (error) { return initialValue; } });
+            useEffect(() => { window.localStorage.setItem(key, JSON.stringify(state)); }, [key, state]); return [state, setState];
         }
 
         function AutocompleteField({ value, onChange, suggestions, placeholder, className }) {
-            const [isOpen, setIsOpen] = useState(false);
-            const wrapperRef = useRef(null);
+            const [isOpen, setIsOpen] = useState(false); const wrapperRef = useRef(null);
             const filtered = suggestions.filter(s => s.toLowerCase().includes(value.toLowerCase()) && s.toLowerCase() !== value.toLowerCase());
-
-            useEffect(() => {
-                function handleClickOutside(event) { if (wrapperRef.current && !wrapperRef.current.contains(event.target)) setIsOpen(false); }
-                document.addEventListener("mousedown", handleClickOutside);
-                return () => document.removeEventListener("mousedown", handleClickOutside);
-            }, []);
-
+            useEffect(() => { function handleClickOutside(e) { if (wrapperRef.current && !wrapperRef.current.contains(e.target)) setIsOpen(false); } document.addEventListener("mousedown", handleClickOutside); return () => document.removeEventListener("mousedown", handleClickOutside); }, []);
             return (
                 <div ref={wrapperRef} className="relative w-full">
                     <input type="text" value={value} onChange={e => { onChange(e.target.value); setIsOpen(true); }} onFocus={() => setIsOpen(true)} placeholder={placeholder} className={className || "w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-blue-500"} />
-                    {isOpen && filtered.length > 0 && (
-                        <ul className="absolute z-50 w-full bg-white border border-gray-200 shadow-lg rounded-lg mt-1 max-h-40 overflow-y-auto">
-                            {filtered.map(s => <li key={s} onClick={() => { onChange(s); setIsOpen(false); }} className="px-4 py-2 hover:bg-blue-50 cursor-pointer text-gray-800 border-b border-gray-50 last:border-0">{s}</li>)}
-                        </ul>
-                    )}
+                    {isOpen && filtered.length > 0 && (<ul className="absolute z-50 w-full bg-white border border-gray-200 shadow-lg rounded-lg mt-1 max-h-40 overflow-y-auto">{filtered.map(s => <li key={s} onClick={() => { onChange(s); setIsOpen(false); }} className="px-4 py-2 hover:bg-blue-50 cursor-pointer text-gray-800 border-b border-gray-50 last:border-0">{s}</li>)}</ul>)}
                 </div>
             );
         }
@@ -85,11 +60,8 @@
             const [apiKey, setApiKey] = useAppStorage('geminiApiKey', '');
             const [adminPassword, setAdminPassword] = useAppStorage('adminPasswordLocal', ''); 
             const [cloudAdminPassword, setCloudAdminPassword] = useState(''); 
-            
-            // Pfarrbüro Passwort States
             const [pfarrbueroPassword, setPfarrbueroPassword] = useAppStorage('pfarrbueroPasswordLocal', '');
             const [cloudPfarrbueroPassword, setCloudPfarrbueroPassword] = useState('');
-            
             const [geminiModel, setGeminiModel] = useAppStorage('geminiModel', 'gemini-3.6-flash');
             const [firebaseProjectId, setFirebaseProjectId] = useAppStorage('firebaseProjectId', '');
             const [planGeneriertBis, setPlanGeneriertBis] = useAppStorage('planGeneriertBis', ''); 
@@ -109,26 +81,15 @@
             const [prozessionen, setProzessionen] = useAppStorage('prozessionenData', []);
             const [pdfFile, setPdfFile] = useState(null);
 
-            // Auto-Login über URL Parameter "?id="
-            useEffect(() => {
-                const urlParams = new URLSearchParams(window.location.search);
-                const projectId = urlParams.get('id');
-                if (projectId && projectId.length > 5) setFirebaseProjectId(projectId.trim());
-            }, []);
+            useEffect(() => { const urlParams = new URLSearchParams(window.location.search); const projectId = urlParams.get('id'); if (projectId && projectId.length > 5) setFirebaseProjectId(projectId.trim()); }, []);
 
             const getFbUrl = (docName) => `https://firestore.googleapis.com/v1/projects/${firebaseProjectId.trim()}/databases/(default)/documents/messdiener/${docName}`;
 
             const fetchAllData = async () => {
                 if (!firebaseProjectId.trim()) return;
                 try {
-                    const fetchDoc = async (docName, setter, parser) => {
-                        try { const res = await fetch(getFbUrl(docName)); const data = await res.json(); if(data.fields) setter(parser(data.fields)); } catch(e){}
-                    };
-                    await fetchDoc('config', f => { 
-                        if(f.adminPassword) setCloudAdminPassword(f.adminPassword.stringValue); 
-                        if(f.pfarrbueroPassword) setCloudPfarrbueroPassword(f.pfarrbueroPassword.stringValue);
-                        if(f.planGeneriertBis) setPlanGeneriertBis(f.planGeneriertBis.stringValue); 
-                    }, f=>f);
+                    const fetchDoc = async (docName, setter, parser) => { try { const res = await fetch(getFbUrl(docName)); const data = await res.json(); if(data.fields) setter(parser(data.fields)); } catch(e){} };
+                    await fetchDoc('config', f => { if(f.adminPassword) setCloudAdminPassword(f.adminPassword.stringValue); if(f.pfarrbueroPassword) setCloudPfarrbueroPassword(f.pfarrbueroPassword.stringValue); if(f.planGeneriertBis) setPlanGeneriertBis(f.planGeneriertBis.stringValue); }, f=>f);
                     await fetchDoc('statistik', setStatistik, f => { let s={}; for(const [k,v] of Object.entries(f)) s[k]=parseInt(v.integerValue); return s; });
                     await fetchDoc('gruppen', f => { if(f.gruppenJson) setGruppen(JSON.parse(f.gruppenJson.stringValue)); if(f.neueMessdienerJson) setNeueMessdiener(JSON.parse(f.neueMessdienerJson.stringValue)); }, f=>f);
                     await fetchDoc('vormerkungen', f => { if(f.vormerkungenJson) setVormerkungen(JSON.parse(f.vormerkungenJson.stringValue)); }, f=>f);
@@ -140,21 +101,10 @@
                 } catch(e) {}
             };
 
-            useEffect(() => {
-                if(firebaseProjectId) fetchAllData().then(() => setIsAppLoading(false)); 
-                else setTimeout(() => setIsAppLoading(false), 500); 
-            }, [firebaseProjectId]);
+            useEffect(() => { if(firebaseProjectId) fetchAllData().then(() => setIsAppLoading(false)); else setTimeout(() => setIsAppLoading(false), 500); }, [firebaseProjectId]);
 
-            const syncDoc = async (docName, fields) => {
-                if (!firebaseProjectId.trim()) return;
-                await fetch(getFbUrl(docName), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) });
-            };
-
-            const syncStatistikToFirebase = async () => {
-                let fields = {};
-                for (const [key, val] of Object.entries(statistik)) fields[key] = { integerValue: String(val) };
-                await syncDoc('statistik', fields);
-            };
+            const syncDoc = async (docName, fields) => { if (!firebaseProjectId.trim()) return; await fetch(getFbUrl(docName), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) }); };
+            const syncStatistikToFirebase = async () => { let fields = {}; for (const [key, val] of Object.entries(statistik)) fields[key] = { integerValue: String(val) }; await syncDoc('statistik', fields); };
 
             useEffect(() => { const t = setTimeout(() => syncDoc('gruppen', { gruppenJson: { stringValue: JSON.stringify(gruppen) }, neueMessdienerJson: { stringValue: JSON.stringify(neueMessdiener) } }), 1000); return () => clearTimeout(t); }, [gruppen, neueMessdiener]);
             useEffect(() => { const t = setTimeout(() => syncDoc('vormerkungen', { vormerkungenJson: { stringValue: JSON.stringify(vormerkungen) } }), 1000); return () => clearTimeout(t); }, [vormerkungen]);
@@ -163,54 +113,25 @@
             useEffect(() => { const t = setTimeout(() => syncDoc('events', { eventsJson: { stringValue: JSON.stringify(events) } }), 1000); return () => clearTimeout(t); }, [events]);
             useEffect(() => { const t = setTimeout(() => syncDoc('prozessionen', { prozessionenJson: { stringValue: JSON.stringify(prozessionen) } }), 1000); return () => clearTimeout(t); }, [prozessionen]);
             useEffect(() => { const t = setTimeout(() => syncDoc('notizen', { notizenJson: { stringValue: JSON.stringify(notizen) } }), 1000); return () => clearTimeout(t); }, [notizen]);
-            
-            // Password Sync
             useEffect(() => { const t = setTimeout(() => syncDoc('config', { planGeneriertBis: { stringValue: planGeneriertBis }, adminPassword: { stringValue: cloudAdminPassword }, pfarrbueroPassword: { stringValue: cloudPfarrbueroPassword } }), 1000); return () => clearTimeout(t); }, [planGeneriertBis, cloudAdminPassword, cloudPfarrbueroPassword]);
 
             const alleMinis = gruppen.flatMap(g => g.mitglieder).sort();
 
-            // Globale Planer Logik
-            const parseDateStr = (str) => {
-                if (!str) return null; const parts = str.match(/\d+/g); if (!parts || parts.length < 2) return null;
-                return new Date(parts.length >= 3 ? parseInt(parts[2]) : new Date().getFullYear(), parseInt(parts[1]) - 1, parseInt(parts[0]));
-            };
-
-            const normalizeTime = (time) => {
-                if(!time) return ""; let clean = time.replace(/h/gi, '').replace(/uhr/gi, '').trim(); let parts = clean.split(/[:.]/);
-                if (parts.length === 2) return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.${parts[1].length === 1 ? `${parts[1]}0` : (parts[1] === "" ? "00" : parts[1])}`;
-                else if (parts.length === 1 && parts[0] !== "") return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.00`;
-                return time;
-            };
-
-            const getWeekIdentifier = (dateStr) => {
-                const d = parseDateStr(dateStr); if (!d) return crypto.randomUUID();
-                const dCopy = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-                dCopy.setUTCDate(dCopy.getUTCDate() + 4 - (dCopy.getUTCDay() || 7));
-                const yearStart = new Date(Date.UTC(dCopy.getUTCFullYear(),0,1));
-                return `${dCopy.getUTCFullYear()}-${Math.ceil((((dCopy - yearStart) / 86400000) + 1)/7).toString().padStart(2, '0')}`;
-            };
+            const parseDateStr = (str) => { if (!str) return null; const parts = str.match(/\d+/g); if (!parts || parts.length < 2) return null; return new Date(parts.length >= 3 ? parseInt(parts[2]) : new Date().getFullYear(), parseInt(parts[1]) - 1, parseInt(parts[0])); };
+            const normalizeTime = (time) => { if(!time) return ""; let clean = time.replace(/h/gi, '').replace(/uhr/gi, '').trim(); let parts = clean.split(/[:.]/); if (parts.length === 2) return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.${parts[1].length === 1 ? `${parts[1]}0` : (parts[1] === "" ? "00" : parts[1])}`; else if (parts.length === 1 && parts[0] !== "") return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.00`; return time; };
+            const getWeekIdentifier = (dateStr) => { const d = parseDateStr(dateStr); if (!d) return crypto.randomUUID(); const dCopy = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); dCopy.setUTCDate(dCopy.getUTCDate() + 4 - (dCopy.getUTCDay() || 7)); const yearStart = new Date(Date.UTC(dCopy.getUTCFullYear(),0,1)); return `${dCopy.getUTCFullYear()}-${Math.ceil((((dCopy - yearStart) / 86400000) + 1)/7).toString().padStart(2, '0')}`; };
 
             const getChronologischeBloecke = () => {
                 let bloecke = []; let currentWeek = null; let currentDienste = [];
-                const sorted = [...dienste].sort((a, b) => {
-                    const d1 = parseDateStr(a.datum) || new Date(0); const d2 = parseDateStr(b.datum) || new Date(0);
-                    if (d1.getTime() === d2.getTime()) return normalizeTime(a.uhrzeit).localeCompare(normalizeTime(b.uhrzeit));
-                    return d1 - d2;
-                });
+                const sorted = [...dienste].sort((a, b) => { const d1 = parseDateStr(a.datum) || new Date(0); const d2 = parseDateStr(b.datum) || new Date(0); if (d1.getTime() === d2.getTime()) return normalizeTime(a.uhrzeit).localeCompare(normalizeTime(b.uhrzeit)); return d1 - d2; });
                 for (let dienst of sorted) {
                     const w = getWeekIdentifier(dienst.datum);
                     if (w !== currentWeek) {
-                        if (currentWeek !== null) {
-                            let counts = {}; currentDienste.forEach(d => { if (d.gruppe) counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; });
-                            bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : "Ohne Gruppe", dienste: currentDienste });
-                        }
+                        if (currentWeek !== null) { let counts = {}; currentDienste.forEach(d => { if (d.gruppe) counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; }); bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : "Ohne Gruppe", dienste: currentDienste }); }
                         currentWeek = w; currentDienste = [dienst];
                     } else currentDienste.push(dienst);
                 }
-                if (currentWeek !== null) {
-                    let counts = {}; currentDienste.forEach(d => { if (d.gruppe) counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; });
-                    bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : "Ohne Gruppe", dienste: currentDienste });
-                }
+                if (currentWeek !== null) { let counts = {}; currentDienste.forEach(d => { if (d.gruppe) counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; }); bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : "Ohne Gruppe", dienste: currentDienste }); }
                 return bloecke;
             };
 
@@ -221,50 +142,22 @@
                 try {
                     const base64String = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(pdfFile); });
                     setLadeStatusText("KI analysiert Pfarrbrief...");
-                    const body = {
-                        systemInstruction: { parts: [{ text: "Du bist ein präziser Parser für Pfarrbrief-Daten. Extrahiere Gottesdienste in Thalau. Erlaube Hl. Messe, Taufe, Hochzeit, Beerdigung, Osternacht, Christmette. Gib JSON Array zurück mit datum, wochentag, uhrzeit, anlass, gruppe, minis." }] },
-                        contents: [{ parts: [{ text: "Analysiere PDF." }, { inlineData: { mimeType: "application/pdf", data: base64String } }] }],
-                        generationConfig: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "OBJECT", properties: { datum: { type: "STRING" }, wochentag: { type: "STRING" }, uhrzeit: { type: "STRING" }, anlass: { type: "STRING" }, gruppe: { type: "STRING" }, minis: { type: "ARRAY", items: { type: "STRING" } } }, required: ["datum", "wochentag", "uhrzeit", "anlass", "minis"] } } }
-                    };
+                    const body = { systemInstruction: { parts: [{ text: "Du bist ein präziser Parser für Pfarrbrief-Daten. Extrahiere Gottesdienste in Thalau. Erlaube Hl. Messe, Taufe, Hochzeit, Beerdigung, Osternacht, Christmette. Gib JSON Array zurück mit datum, wochentag, uhrzeit, anlass, gruppe, minis." }] }, contents: [{ parts: [{ text: "Analysiere PDF." }, { inlineData: { mimeType: "application/pdf", data: base64String } }] }], generationConfig: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "OBJECT", properties: { datum: { type: "STRING" }, wochentag: { type: "STRING" }, uhrzeit: { type: "STRING" }, anlass: { type: "STRING" }, gruppe: { type: "STRING" }, minis: { type: "ARRAY", items: { type: "STRING" } } }, required: ["datum", "wochentag", "uhrzeit", "anlass", "minis"] } } } };
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-                    const json = await response.json();
-                    if (json.error) throw new Error(json.error.message);
+                    const json = await response.json(); if (json.error) throw new Error(json.error.message);
                     let rawDienste = JSON.parse(json.candidates[0].content.parts[0].text.replace(/^```json/, '').replace(/^```/, '').replace(/```$/, '').trim());
-                    
-                    let wochenGruppen = {};
-                    rawDienste.forEach(d => { if (d.gruppe) wochenGruppen[getWeekIdentifier(d.datum)] = d.gruppe.replace(/Gruppe/i, '').trim(); });
+                    let wochenGruppen = {}; rawDienste.forEach(d => { if (d.gruppe) wochenGruppen[getWeekIdentifier(d.datum)] = d.gruppe.replace(/Gruppe/i, '').trim(); });
                     let alleWochen = [...new Set(rawDienste.map(d => getWeekIdentifier(d.datum)))].sort();
-                    let aktuelleGruppe = gruppen[0]?.name || "A";
-                    if (alleWochen.length > 0 && wochenGruppen[alleWochen[0]]) aktuelleGruppe = wochenGruppen[alleWochen[0]];
+                    let aktuelleGruppe = gruppen[0]?.name || "A"; if (alleWochen.length > 0 && wochenGruppen[alleWochen[0]]) aktuelleGruppe = wochenGruppen[alleWochen[0]];
                     const gruppenNamen = gruppen.map(g => g.name);
-                    alleWochen.forEach(woche => {
-                        if (wochenGruppen[woche]) aktuelleGruppe = wochenGruppen[woche];
-                        wochenGruppen[woche] = aktuelleGruppe;
-                        aktuelleGruppe = gruppenNamen[(gruppenNamen.indexOf(aktuelleGruppe) + 1) % gruppenNamen.length];
-                    });
+                    alleWochen.forEach(woche => { if (wochenGruppen[woche]) aktuelleGruppe = wochenGruppen[woche]; wochenGruppen[woche] = aktuelleGruppe; aktuelleGruppe = gruppenNamen[(gruppenNamen.indexOf(aktuelleGruppe) + 1) % gruppenNamen.length]; });
 
                     let bereinigteDienste = [];
                     rawDienste.forEach(raw => {
-                        let d = { ...raw, id: crypto.randomUUID(), minis: [], uhrzeit: normalizeTime(raw.uhrzeit || "") };
-                        let currentAnlass = d.anlass || "Hl. Messe";
-                        let isValid = false;
+                        let d = { ...raw, id: crypto.randomUUID(), minis: [], uhrzeit: normalizeTime(raw.uhrzeit || "") }; let currentAnlass = d.anlass || "Hl. Messe"; let isValid = false;
                         if (["Hl. Messe", "Taufe", "Hochzeit", "Beerdigung", "Osternacht", "Christmette"].includes(currentAnlass)) isValid = true;
-                        else {
-                            let lower = currentAnlass.toLowerCase();
-                            if (lower.includes("taufe")) { currentAnlass = "Taufe"; isValid = true; }
-                            else if (lower.includes("hochzeit") || lower.includes("trauung")) { currentAnlass = "Hochzeit"; isValid = true; }
-                            else if (lower.includes("beerdigung")) { currentAnlass = "Beerdigung"; isValid = true; }
-                            else if (lower.includes("messe") || lower.includes("eucharistie") || lower.includes("hochamt")) { currentAnlass = "Hl. Messe"; isValid = true; }
-                            else if (lower.includes("osternacht")) { currentAnlass = "Osternacht"; isValid = true; }
-                            else if (lower.includes("christmette")) { currentAnlass = "Christmette"; isValid = true; }
-                            else if (lower.includes("gottesdienst")) isValid = true;
-                        }
-                        if (isValid) {
-                            d.anlass = currentAnlass;
-                            let wId = getWeekIdentifier(d.datum);
-                            if (wochenGruppen[wId]) d.gruppe = wochenGruppen[wId];
-                            bereinigteDienste.push(d);
-                        }
+                        else { let lower = currentAnlass.toLowerCase(); if (lower.includes("taufe")) { currentAnlass = "Taufe"; isValid = true; } else if (lower.includes("hochzeit") || lower.includes("trauung")) { currentAnlass = "Hochzeit"; isValid = true; } else if (lower.includes("beerdigung")) { currentAnlass = "Beerdigung"; isValid = true; } else if (lower.includes("messe") || lower.includes("eucharistie") || lower.includes("hochamt")) { currentAnlass = "Hl. Messe"; isValid = true; } else if (lower.includes("osternacht")) { currentAnlass = "Osternacht"; isValid = true; } else if (lower.includes("christmette")) { currentAnlass = "Christmette"; isValid = true; } else if (lower.includes("gottesdienst")) isValid = true; }
+                        if (isValid) { d.anlass = currentAnlass; let wId = getWeekIdentifier(d.datum); if (wochenGruppen[wId]) d.gruppe = wochenGruppen[wId]; bereinigteDienste.push(d); }
                     });
                     setDienste(bereinigteDienste); setAppState('review');
                 } catch (e) { setFehlerMeldung("KI Fehler: " + e.message); } finally { setLaedt(false); }
@@ -275,23 +168,22 @@
                 setTimeout(() => {
                     let neueDienste = [...dienste]; let planMaxDate = null;
                     neueDienste.forEach(d => {
-                        const parsedD = parseDateStr(d.datum);
-                        if (parsedD && (!planMaxDate || parsedD > planMaxDate)) planMaxDate = parsedD;
+                        const parsedD = parseDateStr(d.datum); if (parsedD && (!planMaxDate || parsedD > planMaxDate)) planMaxDate = parsedD;
                         if(d.minis.length === 0 && !d.manuellerBedarf && !d.manuellerText) {
-                            let woche = d.wochentag.toLowerCase();
-                            let count = (woche.includes('sonntag') || woche.includes('feiertag')) ? anzahlSonntags : anzahlWerktags;
+                            let count = (d.wochentag.toLowerCase().includes('sonntag') || d.wochentag.toLowerCase().includes('feiertag')) ? anzahlSonntags : anzahlWerktags;
                             
+                            // Pfarrbüro/Vormerkungen Check - übergibt nun "isFromPfarrbuero"
                             const matchV = vormerkungen.find(v => v.datum === d.datum && (normalizeTime(v.uhrzeit) === normalizeTime(d.uhrzeit) || v.uhrzeit === "" || v.uhrzeit === "Ganztägig"));
-                            if (matchV) { d.minis = [...matchV.minis]; } else {
+                            if (matchV) { 
+                                d.minis = [...matchV.minis]; 
+                                d.isFromPfarrbuero = matchV.isFromPfarrbuero || false; 
+                            } else {
                                 let g = gruppen.find(gr => gr.name === d.gruppe);
                                 if (g && g.mitglieder.length > 0) {
                                     let verfuegbare = g.mitglieder.filter(m => {
                                         const regAbw = regelmaessigeAbwesenheiten.find(ra => ra.name === m);
-                                        if (regAbw) { const days = {'sonntag':1, 'montag':2, 'dienstag':3, 'mittwoch':4, 'donnerstag':5, 'freitag':6, 'samstag':7}; if (regAbw.wochentage.includes(days[woche])) return false; }
-                                        if (parsedD) {
-                                            const urlaub = abwesenheiten.find(ab => { if (ab.name !== m) return false; const s = new Date(ab.start); const e = new Date(ab.end); s.setHours(0,0,0,0); e.setHours(23,59,59,999); return parsedD >= s && parsedD <= e; });
-                                            if (urlaub) return false;
-                                        }
+                                        if (regAbw) { const days = {'sonntag':1, 'montag':2, 'dienstag':3, 'mittwoch':4, 'donnerstag':5, 'freitag':6, 'samstag':7}; if (regAbw.wochentage.includes(days[d.wochentag.toLowerCase()])) return false; }
+                                        if (parsedD) { const urlaub = abwesenheiten.find(ab => { if (ab.name !== m) return false; const s = new Date(ab.start); const e = new Date(ab.end); s.setHours(0,0,0,0); e.setHours(23,59,59,999); return parsedD >= s && parsedD <= e; }); if (urlaub) return false; }
                                         return true;
                                     });
                                     d.minis = verfuegbare.sort(() => 0.5 - Math.random()).slice(0, count);
@@ -328,7 +220,7 @@
 
             const toggleNeu = (name) => setNeueMessdiener(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
             const removeMitglied = (groupId, name) => { setGruppen(prev => prev.map(g => g.id === groupId ? { ...g, mitglieder: g.mitglieder.filter(m => m !== name) } : g)); setNeueMessdiener(prev => prev.filter(n => n !== name)); };
-            const addMitglied = (groupId, name) => { const clean = name.trim(); if (!clean) return; setGruppen(prev => prev.map(g => (g.id === groupId && !g.mitglieder.includes(clean)) ? { ...g, mitglieder: [...g.mitglieder, clean] } : g)); if (statistik[clean] === undefined) setStatistik(prev => ({ ...prev, [clean]: 0 })); };
+            const addMitglied = (groupId, name) => { const c = name.trim(); if (!c) return; setGruppen(prev => prev.map(g => (g.id === groupId && !g.mitglieder.includes(c)) ? { ...g, mitglieder: [...g.mitglieder, c] } : g)); if (statistik[c] === undefined) setStatistik(prev => ({ ...prev, [c]: 0 })); };
             const resetApp = () => { setAppState('upload'); setDienste([]); setPdfFile(null); };
 
             const value = {
@@ -400,9 +292,9 @@
             }
 
             return (
-                <div className="min-h-screen w-full flex flex-col bg-white">
-                    <div className="flex-1 py-10 px-4 flex flex-col items-center justify-center">
-                        <div className="max-w-lg w-full text-center flex flex-col items-center">
+                <div className="min-h-screen w-full flex flex-col bg-white overflow-hidden">
+                    <div className="flex-1 overflow-y-auto p-4 flex flex-col items-center justify-center">
+                        <div className="max-w-lg w-full text-center flex flex-col items-center py-10">
                             <img src="Messdiener.png" alt="Logo" className="w-40 h-40 md:w-48 md:h-48 object-contain mb-6 drop-shadow-md rounded-3xl" onError={(e) => { e.target.style.display='none'; }} />
                             <h1 className="text-4xl md:text-5xl font-black text-gray-900 mb-2 tracking-tight">Messdienerplan</h1>
                             <h2 className="text-2xl font-bold text-blue-600 mb-12">Thalau</h2>
@@ -433,14 +325,14 @@
             const handleNameSubmit = () => { if(!vm.alleMinis.includes(name.trim())) { alert("Name nicht in der Datenbank gefunden! Bitte wähle deinen Namen aus der Vorschlagsliste aus."); return; } setStep(2); };
             const handleSubmitFinal = () => { const valide = neueEintraege.filter(e => e.start !== ""); if (valide.length === 0) { alert("Bitte mindestens ein gültiges Datum eintragen!"); return; } const neueAbwesenheiten = valide.map(e => ({ id: crypto.randomUUID(), name: name.trim(), start: e.start, end: e.type === 'period' ? e.end : e.start, type: e.type })); vm.setAbwesenheiten([...vm.abwesenheiten, ...neueAbwesenheiten]); setStep(3); };
 
-            const formatDate = (isoStr) => { if (!isoStr) return ""; const p = isoStr.split('-'); return `${p[2]}.${p[1]}.${p[0]}`; };
+            const formatDate = (isoStr) => { if (!isoStr) return ""; const p = isoStr.split('-'); return p.length===3?`${p[2]}.${p[1]}.${p[0]}`:isoStr; };
             const isLocked = (dateStr) => { if (!vm.planGeneriertBis || !dateStr) return false; return new Date(dateStr) <= new Date(vm.planGeneriertBis); };
             const existingEntries = vm.abwesenheiten.filter(a => a.name === name.trim() && new Date(a.start) >= new Date(new Date().setHours(0,0,0,0))).sort((a, b) => new Date(a.start) - new Date(b.start));
 
             if (step === 3) {
                 return (
-                    <div className="min-h-screen w-full bg-gray-50 flex flex-col items-center justify-center p-4">
-                        <div className="max-w-2xl w-full text-center bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+                    <div className="h-screen w-full bg-gray-50 flex flex-col items-center justify-center p-4">
+                        <div className="max-w-2xl w-full text-center bg-white rounded-2xl shadow-sm border border-gray-200 p-8 overflow-y-auto max-h-full">
                             <i className="fa-solid fa-circle-check text-6xl text-green-500 mb-4"></i><h1 className="text-3xl font-bold text-gray-900 mb-2">Erfolgreich gesendet!</h1>
                             <p className="text-gray-600 mb-8">Deine Abwesenheiten wurden gespeichert.</p>
                             <button onClick={() => { setStep(2); setNeueEintraege([{ id: crypto.randomUUID(), type: 'single', start: '', end: '' }]); }} className="text-blue-600 font-bold hover:underline block w-full mb-4">Weitere eintragen</button>
@@ -451,8 +343,8 @@
             }
 
             return (
-                <div className="min-h-screen w-full flex flex-col bg-[#f0ebf8]">
-                    <div className="flex-1 py-8 px-4">
+                <div className="h-screen w-full flex flex-col bg-[#f0ebf8] overflow-hidden">
+                    <div className="flex-1 overflow-y-auto py-8 px-4">
                         <div className="max-w-2xl mx-auto w-full pb-10">
                             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6">
                                 <div className="h-3 bg-red-500 w-full"></div>
@@ -490,14 +382,20 @@
                 const parts = datum.split('-'); let wt = "Sonntag";
                 if(parts.length === 3) { const d = new Date(parts[0], parts[1]-1, parts[2]); const days = ['Sonntag','Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag']; wt = days[d.getDay()]; }
                 const formattedDate = parts.length === 3 ? `${parts[2]}.${parts[1]}.${parts[0]}` : datum;
-                vm.setVormerkungen([...vm.vormerkungen, { id: crypto.randomUUID(), datum: formattedDate, wochentag: wt, uhrzeit: uhrzeit, anlass: anlass || "Gottesdienst", minis: minis.filter(m => m.trim() !== "" && vm.alleMinis.includes(m.trim())) }]);
+                
+                // HIER: Pfarrbüro Markierung setzen
+                vm.setVormerkungen([...vm.vormerkungen, { id: crypto.randomUUID(), datum: formattedDate, wochentag: wt, uhrzeit: uhrzeit, anlass: anlass || "Gottesdienst", minis: minis.filter(m => m.trim() !== "" && vm.alleMinis.includes(m.trim())), isFromPfarrbuero: true }]);
                 alert("Erfolgreich vorgemerkt!"); setDatum(''); setAnlass(''); setUhrzeit(''); setMinis([""]); vm.setRoute('landing');
             };
 
             return (
-                <div className="min-h-screen w-full flex flex-col bg-gray-50">
-                    <div className="bg-blue-600 text-white p-4 pt-10 flex items-center shadow-md shrink-0 z-10"><button onClick={() => vm.setRoute('landing')} className="text-white hover:text-blue-200 p-2"><i className="fa-solid fa-chevron-left text-xl"></i></button><h1 className="text-xl font-bold ml-4 flex-1">Vormerken (Pfarrbüro)</h1></div>
-                    <div className="flex-1 py-8 px-4">
+                <div className="h-screen w-full flex flex-col bg-gray-50 overflow-hidden">
+                    <div className="bg-blue-600 text-white p-4 pt-10 flex items-center shadow-md shrink-0 z-10">
+                        <button onClick={() => vm.setRoute('landing')} className="text-white hover:text-blue-200 p-2"><i className="fa-solid fa-chevron-left text-xl"></i></button>
+                        <h1 className="text-xl font-bold ml-4 flex-1">Vormerken (Pfarrbüro)</h1>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto p-4 md:p-6">
                         <div className="max-w-2xl mx-auto w-full pb-10">
                             <div className="bg-blue-50 text-blue-800 p-4 rounded-xl mb-8 text-sm leading-relaxed border border-blue-100"><i className="fa-solid fa-circle-info mr-2"></i>Hier können Sie Messdiener eintragen, die sich bereits gemeldet haben.</div>
                             <div className="space-y-6">
@@ -513,7 +411,7 @@
         }
 
         // ==========================================
-        // 3. ADMIN VIEWS
+        // 4. ADMIN VIEWS
         // ==========================================
         function MobileTopBar({ title }) {
             const vm = useViewModel();
@@ -524,7 +422,8 @@
 
         function Sidebar() {
             const { activeTab, setActiveTab } = useViewModel();
-            const menuItems = [{ section: "Arbeitsbereich", items: [{ id: 'planer', label: 'Planer', icon: 'fa-regular fa-file-lines' }, { id: 'prozessionen', label: 'Prozessionen', icon: 'fa-solid fa-person-walking' }, { id: 'events', label: 'Events & Aktionen', icon: 'fa-solid fa-champagne-glasses' }, { id: 'vormerken', label: 'Vormerken', icon: 'fa-regular fa-calendar-check' }, { id: 'statistik', label: 'Statistik', icon: 'fa-solid fa-chart-column' }, { id: 'notizen', label: 'Notizen', icon: 'fa-regular fa-note-sticky' }, { id: 'werkzeuge', label: 'Werkzeuge', icon: 'fa-solid fa-screwdriver-wrench' }]}, { section: "Konfiguration", items: [{ id: 'messdiener', label: 'Messdiener & Gruppen', icon: 'fa-solid fa-user-group' }, { id: 'einstellungen', label: 'Einstellungen', icon: 'fa-solid fa-gear' }]}];
+            // NEU: Abwesenheiten-Tab in der Sidebar
+            const menuItems = [{ section: "Arbeitsbereich", items: [{ id: 'planer', label: 'Planer', icon: 'fa-regular fa-file-lines' }, { id: 'prozessionen', label: 'Prozessionen', icon: 'fa-solid fa-person-walking' }, { id: 'events', label: 'Events & Aktionen', icon: 'fa-solid fa-champagne-glasses' }, { id: 'vormerken', label: 'Vormerken', icon: 'fa-regular fa-calendar-check' }, { id: 'abwesenheiten_admin', label: 'Abwesenheiten', icon: 'fa-solid fa-user-clock' }, { id: 'statistik', label: 'Statistik', icon: 'fa-solid fa-chart-column' }, { id: 'notizen', label: 'Notizen', icon: 'fa-regular fa-note-sticky' }, { id: 'werkzeuge', label: 'Werkzeuge', icon: 'fa-solid fa-screwdriver-wrench' }]}, { section: "Konfiguration", items: [{ id: 'messdiener', label: 'Messdiener & Gruppen', icon: 'fa-solid fa-user-group' }, { id: 'einstellungen', label: 'Einstellungen', icon: 'fa-solid fa-gear' }]}];
             return (
                 <div className="w-[260px] h-full bg-[#f5f5f5] border-r border-gray-300 flex flex-col select-none z-20 shrink-0">
                     <div className="p-4 pt-10 pb-6 text-xl font-bold text-gray-800 ml-2">Messdiener Planer</div>
@@ -544,7 +443,13 @@
                     <p className="text-gray-500 font-medium text-sm md:text-base line-clamp-2">{dienst.anlass}</p>
                     <hr className="my-3 border-gray-100" />
                     {isAssignedPhase ? (
-                        <div className="space-y-1 md:space-y-2 min-h-[30px]">{dienst.manuellerText ? <p className="text-red-500 font-medium text-sm">{dienst.manuellerText}</p> : dienst.manuellerBedarf ? <p className="text-red-500 font-medium text-sm">Es werden {dienst.manuellerBedarf} Minis benötigt.</p> : dienst.minis.length === 0 ? <p className="text-red-500 font-bold">-</p> : dienst.minis.map(m => (<div key={m} className="flex items-center space-x-2"><i className="fa-solid fa-user text-gray-400 text-xs"></i><span className="font-semibold text-gray-800 text-sm md:text-base">{m}</span></div>))}</div>
+                        <div className="space-y-1 md:space-y-2 min-h-[30px]">
+                            {dienst.manuellerText ? <p className="text-red-500 font-medium text-sm">{dienst.manuellerText}</p> : dienst.manuellerBedarf ? <p className="text-red-500 font-medium text-sm">Es werden {dienst.manuellerBedarf} Minis benötigt.</p> : dienst.minis.length === 0 ? <p className="text-red-500 font-bold">-</p> : dienst.minis.map(m => (
+                            <div key={m} className="flex items-center space-x-2">
+                                <i className={`fa-solid fa-user ${dienst.isFromPfarrbuero ? 'text-orange-400' : 'text-gray-400'} text-xs`}></i>
+                                <span className={`font-semibold text-sm md:text-base ${dienst.isFromPfarrbuero ? 'text-orange-500' : 'text-gray-800'}`}>{m} {dienst.isFromPfarrbuero && <span className="text-[10px] ml-1 opacity-70 font-normal">(Pfarrbüro)</span>}</span>
+                            </div>))}
+                        </div>
                     ) : <p className="text-gray-400 text-xs md:text-sm italic">Wird festgelegt</p>}
                 </div>
             );
@@ -552,66 +457,102 @@
 
         function PlanerView() {
             const vm = useViewModel();
+
             return (
-                <div className="flex flex-col md:flex-row h-full w-full relative">
+                <div className="flex flex-col md:flex-row h-full w-full overflow-hidden">
                     <MobileTopBar title="Planer" />
                     
-                    <div className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden w-full">
-                        <div className="w-full md:w-[400px] lg:w-[450px] bg-white p-6 md:p-10 border-b md:border-b-0 md:border-r border-gray-200 z-10 shrink-0 md:overflow-y-auto md:h-full">
-                            {vm.appState === 'upload' && (
-                                <div className="flex flex-col h-full justify-center">
-                                    <h2 className="text-2xl md:text-3xl font-bold text-gray-900">1. Pfarrbrief hochladen</h2>
-                                    <p className="text-gray-500 text-sm md:text-lg mt-2 mb-6">Lade den aktuellen Pfarrbrief als PDF hoch.</p>
-                                    <label className={`w-full h-48 md:h-80 border-4 border-dashed rounded-3xl flex flex-col items-center justify-center cursor-pointer transition ${vm.pdfFile ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50 hover:bg-gray-100'}`}>
-                                        <i className={`fa-solid ${vm.pdfFile ? 'fa-file-circle-check text-blue-500' : 'fa-file-pdf text-gray-400'} text-4xl md:text-6xl mb-4`}></i>
-                                        <span className={`text-lg md:text-xl font-bold text-center px-4 ${vm.pdfFile ? 'text-blue-600' : 'text-gray-500'}`}>{vm.pdfFile ? vm.pdfFile.name : 'PDF hierher ziehen'}</span>
-                                        <input type="file" accept="application/pdf" className="hidden" onChange={e => vm.setPdfFile(e.target.files[0])} />
-                                    </label>
-                                    <button onClick={vm.leseGottesdienste} disabled={vm.laedt || !vm.pdfFile} className="mt-6 w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-lg font-bold py-3 md:py-4 rounded-xl shadow-lg transition flex justify-center items-center">
-                                        {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-3"></i> : <i className="fa-solid fa-wand-magic-sparkles mr-3"></i>}{vm.laedt ? vm.ladeStatusText : 'Extrahieren'}
-                                    </button>
-                                    {vm.fehlerMeldung && <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-lg text-sm font-medium"><i className="fa-solid fa-triangle-exclamation mr-2"></i>{vm.fehlerMeldung}</div>}
-                                </div>
-                            )}
-                            {vm.appState === 'review' && (
-                                <div className="flex flex-col h-full justify-center">
-                                    <h2 className="text-2xl md:text-3xl font-bold text-gray-900">2. Abgleichen</h2>
-                                    <p className="text-gray-500 mt-2 mb-6">Prüfe die erkannten Termine.</p>
-                                    <button onClick={vm.teileEin} disabled={vm.laedt} className="w-full bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold py-3 md:py-4 rounded-xl shadow-lg transition flex justify-center items-center">
-                                        {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-3"></i> : <i className="fa-solid fa-users mr-3"></i>}{vm.laedt ? vm.ladeStatusText : 'Jetzt Einteilen'}
-                                    </button>
-                                    <button onClick={() => { vm.setAppState('upload'); vm.setDienste([]); vm.setPdfFile(null); }} className="mt-3 w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">Neuen Plan starten</button>
-                                </div>
-                            )}
-                            {vm.appState === 'assigned' && (
-                                <div className="flex flex-col h-full justify-center">
-                                    <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-6">Fertig!</h2>
-                                    <button onClick={vm.exportierePDF} className="w-full bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold py-3 md:py-4 rounded-xl shadow-lg transition"><i className="fa-solid fa-print mr-3"></i>Als PDF exportieren</button>
-                                    <button onClick={() => { vm.setAppState('upload'); vm.setDienste([]); vm.setPdfFile(null); }} className="mt-3 w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">Neuen Plan starten</button>
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="flex-1 bg-gray-50/50 p-4 md:p-10 md:overflow-y-auto relative md:h-full">
-                            {vm.laedt && vm.appState !== 'upload' && <div className="absolute inset-0 z-50 bg-white/60 backdrop-blur-sm flex items-center justify-center"><i className="fa-solid fa-circle-notch fa-spin text-4xl text-blue-500"></i></div>}
-                            {vm.dienste.length === 0 && !vm.laedt ? (
-                                <div className="h-full flex flex-col justify-center items-center text-gray-400 py-10 md:py-20"><i className="fa-solid fa-inbox text-5xl md:text-7xl mb-4 opacity-50"></i><p className="text-lg md:text-xl font-medium text-center">Hier erscheinen die Termine.</p></div>
-                            ) : (
-                                <div className="max-w-6xl mx-auto pb-20">
-                                    <h1 className="text-2xl md:text-4xl font-extrabold text-gray-900 mb-6 hidden md:block">Gottesdienste</h1>
-                                    {vm.getChronologischeBloecke().map((block, idx) => (
-                                        <div key={idx} className="mb-8 md:mb-12">
-                                            <div className="flex items-center space-x-2 mb-4 md:mb-6">
-                                                <select className="bg-transparent text-xl md:text-2xl font-bold text-gray-900 outline-none" value={block.gruppe} onChange={()=>{}}>
-                                                    <option value="Ohne Gruppe">Nicht zugeordnet</option>
-                                                    {vm.gruppen.map(g => <option key={g.name} value={g.name}>Gruppe {g.name}</option>)}
-                                                </select>
-                                            </div>
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                                                {block.dienste.map(d => <DienstKarte key={d.id} dienst={d} isAssignedPhase={vm.appState === 'assigned'} />)}
-                                            </div>
+                    <div className="w-full md:w-[400px] lg:w-[450px] bg-white p-6 md:p-10 border-b md:border-b-0 md:border-r border-gray-200 z-10 shrink-0 md:overflow-y-auto md:h-full">
+                        {vm.appState === 'upload' && (
+                            <div className="flex flex-col h-full justify-center">
+                                <h2 className="text-2xl md:text-3xl font-bold text-gray-900">1. Pfarrbrief hochladen</h2>
+                                <p className="text-gray-500 text-sm md:text-lg mt-2 mb-6">Lade den aktuellen Pfarrbrief als PDF hoch.</p>
+                                <label className={`w-full h-48 md:h-80 border-4 border-dashed rounded-3xl flex flex-col items-center justify-center cursor-pointer transition ${vm.pdfFile ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50 hover:bg-gray-100'}`}>
+                                    <i className={`fa-solid ${vm.pdfFile ? 'fa-file-circle-check text-blue-500' : 'fa-file-pdf text-gray-400'} text-4xl md:text-6xl mb-4`}></i>
+                                    <span className={`text-lg md:text-xl font-bold text-center px-4 ${vm.pdfFile ? 'text-blue-600' : 'text-gray-500'}`}>{vm.pdfFile ? vm.pdfFile.name : 'PDF hierher ziehen'}</span>
+                                    <input type="file" accept="application/pdf" className="hidden" onChange={e => vm.setPdfFile(e.target.files[0])} />
+                                </label>
+                                <button onClick={vm.leseGottesdienste} disabled={vm.laedt || !vm.pdfFile} className="mt-6 w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-lg font-bold py-3 md:py-4 rounded-xl shadow-lg transition flex justify-center items-center">
+                                    {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-3"></i> : <i className="fa-solid fa-wand-magic-sparkles mr-3"></i>}{vm.laedt ? vm.ladeStatusText : 'Extrahieren'}
+                                </button>
+                                {vm.fehlerMeldung && <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-lg text-sm font-medium"><i className="fa-solid fa-triangle-exclamation mr-2"></i>{vm.fehlerMeldung}</div>}
+                            </div>
+                        )}
+                        {vm.appState === 'review' && (
+                            <div className="flex flex-col h-full justify-center">
+                                <h2 className="text-2xl md:text-3xl font-bold text-gray-900">2. Abgleichen</h2>
+                                <p className="text-gray-500 mt-2 mb-6">Prüfe die erkannten Termine.</p>
+                                <button onClick={vm.teileEin} disabled={vm.laedt} className="w-full bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold py-3 md:py-4 rounded-xl shadow-lg transition flex justify-center items-center">
+                                    {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-3"></i> : <i className="fa-solid fa-users mr-3"></i>}{vm.laedt ? vm.ladeStatusText : 'Jetzt Einteilen'}
+                                </button>
+                                <button onClick={vm.resetApp} className="mt-3 w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">Neuen Plan starten</button>
+                            </div>
+                        )}
+                        {vm.appState === 'assigned' && (
+                            <div className="flex flex-col h-full justify-center">
+                                <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-6">Fertig!</h2>
+                                <button onClick={vm.exportierePDF} className="w-full bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold py-3 md:py-4 rounded-xl shadow-lg transition"><i className="fa-solid fa-print mr-3"></i>Als PDF exportieren</button>
+                                <button onClick={vm.resetApp} className="mt-3 w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">Neuen Plan starten</button>
+                            </div>
+                        )}
+                    </div>
+                    
+                    <div className="flex-1 bg-gray-50/50 p-4 md:p-10 overflow-y-auto relative">
+                        {vm.laedt && vm.appState !== 'upload' && <div className="absolute inset-0 z-50 bg-white/60 backdrop-blur-sm flex items-center justify-center"><i className="fa-solid fa-circle-notch fa-spin text-4xl text-blue-500"></i></div>}
+                        {vm.dienste.length === 0 && !vm.laedt ? (
+                            <div className="h-full flex flex-col justify-center items-center text-gray-400 py-10 md:py-20"><i className="fa-solid fa-inbox text-5xl md:text-7xl mb-4 opacity-50"></i><p className="text-lg md:text-xl font-medium text-center">Hier erscheinen die Termine.</p></div>
+                        ) : (
+                            <div className="max-w-6xl mx-auto pb-20">
+                                <h1 className="text-2xl md:text-4xl font-extrabold text-gray-900 mb-6 hidden md:block">Gottesdienste</h1>
+                                {vm.getChronologischeBloecke().map((block, idx) => (
+                                    <div key={idx} className="mb-8 md:mb-12">
+                                        <div className="flex items-center space-x-2 mb-4 md:mb-6">
+                                            <select className="bg-transparent text-xl md:text-2xl font-bold text-gray-900 outline-none" value={block.gruppe} onChange={()=>{}}>
+                                                <option value="Ohne Gruppe">Nicht zugeordnet</option>
+                                                {vm.gruppen.map(g => <option key={g.name} value={g.name}>Gruppe {g.name}</option>)}
+                                            </select>
                                         </div>
-                                    ))}
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+                                            {block.dienste.map(d => <DienstKarte key={d.id} dienst={d} isAssignedPhase={vm.appState === 'assigned'} />)}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // NEU: Abwesenheiten (Admin)
+        function AbwesenheitenAdminView() {
+            const vm = useViewModel();
+            const sorted = [...vm.abwesenheiten].sort((a,b) => new Date(a.start) - new Date(b.start));
+            const fmt = (iso) => { if(!iso)return""; const p=iso.split('-'); return p.length===3?`${p[2]}.${p[1]}.${p[0]}`:iso; };
+            
+            return (
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Abwesenheiten" />
+                    <div className="flex-1 overflow-y-auto p-4 md:p-10 bg-gray-50/50">
+                        <div className="max-w-5xl mx-auto md:mx-0 pb-12">
+                            <div className="hidden md:flex justify-between items-end mb-8">
+                                <div><h1 className="text-3xl font-bold text-gray-900">Eingetragene Abwesenheiten</h1></div>
+                            </div>
+                            {sorted.length === 0 ? (
+                                <div className="text-center p-8 bg-white border border-dashed border-gray-300 rounded-xl mb-8"><p className="text-gray-500">Keine Abwesenheiten eingetragen.</p></div>
+                            ) : (
+                                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                                    <div className="divide-y divide-gray-100">
+                                        {sorted.map(abw => (
+                                            <div key={abw.id} className="p-4 md:p-6 flex justify-between items-center hover:bg-gray-50">
+                                                <div>
+                                                    <div className="font-bold text-gray-800 text-lg">{abw.name}</div>
+                                                    <div className="text-sm text-gray-500 mt-1"><i className="fa-regular fa-calendar mr-2"></i>{abw.type === 'single' ? fmt(abw.start) : `${fmt(abw.start)} - ${fmt(abw.end)}`}</div>
+                                                </div>
+                                                <button onClick={() => { if(confirm("Eintrag löschen?")) vm.setAbwesenheiten(vm.abwesenheiten.filter(x => x.id !== abw.id)); }} className="text-red-400 hover:text-red-600 p-2"><i className="fa-solid fa-trash text-lg"></i></button>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
                         </div>
@@ -683,7 +624,7 @@
                                             <p className="text-purple-600 font-bold text-xs">{v.wochentag}, {v.datum}</p>
                                             <p className="text-xl font-black text-gray-900 mt-1">{v.uhrzeit || 'Variabel'}</p>
                                             <p className="text-gray-500 text-sm font-medium mb-3 truncate">{v.anlass}</p>
-                                            <div className="space-y-1">{v.minis.map(m => <div key={m} className="flex items-center space-x-2"><i className="fa-solid fa-thumbtack text-purple-400 text-xs"></i><span className="text-sm font-semibold">{m}</span></div>)}</div>
+                                            <div className="space-y-1">{v.minis.map(m => <div key={m} className="flex items-center space-x-2"><i className={`fa-solid fa-thumbtack ${v.isFromPfarrbuero?'text-orange-400':'text-purple-400'} text-xs`}></i><span className={`text-sm font-semibold ${v.isFromPfarrbuero?'text-orange-600':''}`}>{m} {v.isFromPfarrbuero && <span className="opacity-70 text-[10px] ml-1 font-normal">(Pfarrbüro)</span>}</span></div>)}</div>
                                         </div>
                                     ))}
                                 </div>
@@ -983,7 +924,7 @@
 
                             <SectionBox icon="fa-solid fa-users text-orange-500" title="Einteilungs-Mengen">
                                 <div className="flex flex-col md:flex-row md:space-x-12 space-y-4 md:space-y-0">
-                                    <div className="flex items-center justify-between md:justify-start space-x-4 w-full md:w-auto"><span className="text-sm font-medium">Sonntage/Feiertage: {vm.anzahlSonntags}</span><div className="flex border border-gray-300 rounded-lg overflow-hidden"><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlSonntags(Math.max(1, vm.anzahlSonntags - 1))}>-</button><div className="w-px bg-gray-300"></div><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlSonntags(Math.min(10, vm.anzahlSonntags + 1))}>+</button></div></div>
+                                    <div className="flex items-center justify-between md:justify-start space-x-4 w-full md:w-auto"><span className="text-sm font-medium">Sonntage: {vm.anzahlSonntags}</span><div className="flex border border-gray-300 rounded-lg overflow-hidden"><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlSonntags(Math.max(1, vm.anzahlSonntags - 1))}>-</button><div className="w-px bg-gray-300"></div><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlSonntags(Math.min(10, vm.anzahlSonntags + 1))}>+</button></div></div>
                                     <div className="flex items-center justify-between md:justify-start space-x-4 w-full md:w-auto"><span className="text-sm font-medium">Werktage: {vm.anzahlWerktags}</span><div className="flex border border-gray-300 rounded-lg overflow-hidden"><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlWerktags(Math.max(1, vm.anzahlWerktags - 1))}>-</button><div className="w-px bg-gray-300"></div><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlWerktags(Math.min(10, vm.anzahlWerktags + 1))}>+</button></div></div>
                                 </div>
                             </SectionBox>
@@ -994,7 +935,7 @@
         }
 
         // ==========================================
-        // 8. ADMIN APP & DASHBOARD
+        // 7. ADMIN APP & DASHBOARD
         // ==========================================
         function AdminDashboard() {
             const vm = useViewModel();
@@ -1003,6 +944,7 @@
                 { id: 'prozessionen', label: 'Prozessionen', icon: 'fa-solid fa-person-walking', color: 'bg-purple-500' },
                 { id: 'events', label: 'Events', icon: 'fa-solid fa-champagne-glasses', color: 'bg-pink-500' },
                 { id: 'vormerken', label: 'Vormerken', icon: 'fa-regular fa-calendar-check', color: 'bg-green-500' },
+                { id: 'abwesenheiten_admin', label: 'Urlaube', icon: 'fa-solid fa-user-clock', color: 'bg-red-500' },
                 { id: 'statistik', label: 'Statistik', icon: 'fa-solid fa-chart-column', color: 'bg-orange-500' },
                 { id: 'notizen', label: 'Notizen', icon: 'fa-regular fa-note-sticky', color: 'bg-yellow-500' },
                 { id: 'messdiener', label: 'Gruppen', icon: 'fa-solid fa-user-group', color: 'bg-indigo-500' },
@@ -1048,6 +990,7 @@
                         {vm.activeTab === 'prozessionen' && <ProzessionenView/>}
                         {vm.activeTab === 'events' && <EventsView/>}
                         {vm.activeTab === 'vormerken' && <VormerkenView/>}
+                        {vm.activeTab === 'abwesenheiten_admin' && <AbwesenheitenAdminView/>}
                         {vm.activeTab === 'statistik' && <StatistikView/>}
                         {vm.activeTab === 'notizen' && <NotizenView/>}
                         {vm.activeTab === 'werkzeuge' && <WerkzeugeView/>}
@@ -1058,6 +1001,9 @@
             );
         }
 
+        // ==========================================
+        // 8. MAIN APP ROUTER
+        // ==========================================
         function App() {
             const vm = useViewModel();
 
