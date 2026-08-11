@@ -102,10 +102,13 @@
             const [prozessionen, setProzessionen] = useAppStorage('prozessionenData', []);
             const [pdfFile, setPdfFile] = useState(null);
 
-            // Auto-Login über URL
+            // Auto-Login über URL-Parameter (?id=...)
             useEffect(() => {
-                const pathParam = window.location.pathname.replace('/', '').trim();
-                if (pathParam && pathParam.length > 5) setFirebaseProjectId(pathParam);
+                const urlParams = new URLSearchParams(window.location.search);
+                const projectId = urlParams.get('id');
+                if (projectId && projectId.length > 5) {
+                    setFirebaseProjectId(projectId.trim());
+                }
             }, []);
 
             const getFbUrl = (docName) => `https://firestore.googleapis.com/v1/projects/${firebaseProjectId.trim()}/databases/(default)/documents/messdiener/${docName}`;
