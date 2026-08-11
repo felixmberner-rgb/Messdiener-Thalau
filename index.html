@@ -4,17 +4,33 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Messdiener Planer</title>
+    
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
-            theme: { extend: { colors: { macBg: '#ececec', macSidebar: '#f5f5f5', macActive: '#007aff', macText: '#1d1d1f' }, fontFamily: { sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'] } } }
+            theme: {
+                extend: {
+                    colors: { macBg: '#ececec', macSidebar: '#f5f5f5', macActive: '#007aff', macText: '#1d1d1f' },
+                    fontFamily: { sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'] }
+                }
+            }
         }
     </script>
+
+    <!-- Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- jsPDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
     <style>
         body { overflow: hidden; margin: 0; background-color: #ececec; -webkit-font-smoothing: antialiased; }
         ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -27,9 +43,11 @@
 </head>
 <body>
     <div id="root"></div>
+
     <script type="text/babel">
         const { useState, useEffect, createContext, useContext, useRef } = React;
 
+        // --- HILFSFUNKTIONEN (@AppStorage) ---
         function useAppStorage(key, initialValue) {
             const [state, setState] = useState(() => {
                 try { const item = window.localStorage.getItem(key); return item ? JSON.parse(item) : initialValue; } 
@@ -39,15 +57,18 @@
             return [state, setState];
         }
 
+        // --- AUTOCOMPLETE KOMPONENTE ---
         function AutocompleteField({ value, onChange, suggestions, placeholder, className }) {
             const [isOpen, setIsOpen] = useState(false);
             const wrapperRef = useRef(null);
             const filtered = suggestions.filter(s => s.toLowerCase().includes(value.toLowerCase()) && s.toLowerCase() !== value.toLowerCase());
+            
             useEffect(() => {
                 function handleClickOutside(event) { if (wrapperRef.current && !wrapperRef.current.contains(event.target)) setIsOpen(false); }
                 document.addEventListener("mousedown", handleClickOutside);
                 return () => document.removeEventListener("mousedown", handleClickOutside);
             }, []);
+            
             return (
                 <div ref={wrapperRef} className="relative w-full">
                     <input type="text" value={value} onChange={e => { onChange(e.target.value); setIsOpen(true); }} onFocus={() => setIsOpen(true)} placeholder={placeholder} className={className || "w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-blue-500"} />
@@ -60,27 +81,33 @@
             );
         }
 
+        // --- VIEWMODEL PROVIDER ---
         const ViewModelContext = createContext();
 
         function ViewModelProvider({ children }) {
-            const [route, setRoute] = useAppStorage('appRoute', 'landing'); 
+            // App Routing
+            const [route, setRoute] = useAppStorage('appRoute', 'landing'); // 'landing', 'admin', 'pfarrbuero'
             const [activeTab, setActiveTab] = useState('planer'); 
-            const [isAppLoading, setIsAppLoading] = useState(true);
+            const [isAppLoading, setIsAppLoading] = useState(false);
             const [appState, setAppState] = useAppStorage('appStateRaw', 'upload'); 
             const [laedt, setLaedt] = useState(false);
             const [ladeStatusText, setLadeStatusText] = useState("");
             const [fehlerMeldung, setFehlerMeldung] = useState(null);
             
+            // Konfiguration
             const [apiKey, setApiKey] = useAppStorage('geminiApiKey', '');
-            const [adminPassword, setAdminPassword] = useAppStorage('adminPasswordLocal', ''); 
-            const [cloudAdminPassword, setCloudAdminPassword] = useState(''); 
             const [geminiModel, setGeminiModel] = useAppStorage('geminiModel', 'gemini-3.6-flash');
             const [firebaseProjectId, setFirebaseProjectId] = useAppStorage('firebaseProjectId', '');
-            const [csvTabelleUrl, setCsvTabelleUrl] = useAppStorage('csvTabelleUrl', '');
-            const [iCalUrl, setICalUrl] = useAppStorage('iCalUrl', '');
+            
             const [anzahlSonntags, setAnzahlSonntags] = useAppStorage('anzahlSonntags', 4);
             const [anzahlWerktags, setAnzahlWerktags] = useAppStorage('anzahlWerktags', 2);
             
+            const [pdfGrauerText, setPdfGrauerText] = useAppStorage('pdfGrauerText', 'Wer eingeteilt ist und nicht dienen kann, sucht sich bitte selbstständig eine Vertretung!');
+            const [pdfFooterUeberschrift, setPdfFooterUeberschrift] = useAppStorage('pdfFooterUeberschrift', 'Abwesenheiten eintragen');
+            const [pdfFooterTextSuffix, setPdfFooterTextSuffix] = useAppStorage('pdfFooterTextV2', 'Wenn Abwesenheiten jetzt schon bekannt sind, trage sie ganz einfach online ein.');
+            const [pdfLinkUrl, setPdfLinkUrl] = useAppStorage('pdfLinkUrl', 'https://forms.gle/nSzhoDgeAhUS4QG16');
+
+            // Daten
             const [gruppen, setGruppen] = useAppStorage('gruppenDaten', [{ id: crypto.randomUUID(), name: "A", mitglieder: [] }]);
             const [neueMessdiener, setNeueMessdiener] = useAppStorage('neueMessdienerData', []);
             const [immerZusammen, setImmerZusammen] = useAppStorage('immerZusammenData', []);
@@ -89,10 +116,8 @@
             const [dienste, setDienste] = useAppStorage('diensteData', []);
             const [vormerkungen, setVormerkungen] = useAppStorage('vormerkungenData', []);
             const [regelmaessigeAbwesenheiten, setRegelmaessigeAbwesenheiten] = useAppStorage('regelmaessigeAbwesenheitenData', []);
-            const [newsItems, setNewsItems] = useAppStorage('newsItemsData', []);
             const [notizen, setNotizen] = useAppStorage('notizenData', []);
             const [events, setEvents] = useAppStorage('eventsData', []);
-            const [deletedEvents, setDeletedEvents] = useAppStorage('deletedEventsData', []);
             const [prozessionen, setProzessionen] = useAppStorage('prozessionenData', []);
             
             const [customGroupDateRanges, setCustomGroupDateRanges] = useAppStorage('customGroupDateRangesData', {});
@@ -100,22 +125,17 @@
             const [nextGroup2, setNextGroup2] = useAppStorage('nextGroup2', '');
 
             const [pdfFile, setPdfFile] = useState(null);
+            const [firebaseSyncErfolg, setFirebaseSyncErfolg] = useState(false);
 
+            // ==========================================
+            // MARK: - FIREBASE REST API INTEGRATION
+            // ==========================================
             const getFbUrl = (docName) => `https://firestore.googleapis.com/v1/projects/${firebaseProjectId.trim()}/databases/(default)/documents/messdiener/${docName}`;
-
-            const fetchConfigFromFirebase = async () => {
-                if (!firebaseProjectId.trim()) return;
-                try {
-                    const res = await fetch(getFbUrl('config'));
-                    const data = await res.json();
-                    if (data.fields && data.fields.adminPassword) setCloudAdminPassword(data.fields.adminPassword.stringValue);
-                } catch (e) { console.log("Config nicht gefunden"); }
-            };
 
             const fetchAllData = async () => {
                 if (!firebaseProjectId.trim()) return;
+                setIsAppLoading(true);
                 try {
-                    await fetchConfigFromFirebase();
                     const fetchDoc = async (docName, setter, parser) => {
                         try { const res = await fetch(getFbUrl(docName)); const data = await res.json(); if(data.fields) setter(parser(data.fields)); } catch(e){}
                     };
@@ -124,15 +144,17 @@
                     await fetchDoc('regeln', f => { if(f.immerZusammenJson) setImmerZusammen(JSON.parse(f.immerZusammenJson.stringValue)); if(f.nieZusammenJson) setNieZusammen(JSON.parse(f.nieZusammenJson.stringValue)); }, f=>f);
                     await fetchDoc('vormerkungen', f => { if(f.vormerkungenJson) setVormerkungen(JSON.parse(f.vormerkungenJson.stringValue)); }, f=>f);
                     await fetchDoc('wochenAbwesenheiten', f => { if(f.abwesenheitenJson) setRegelmaessigeAbwesenheiten(JSON.parse(f.abwesenheitenJson.stringValue)); }, f=>f);
-                    await fetchDoc('events', f => { if(f.eventsJson) setEvents(JSON.parse(f.eventsJson.stringValue)); if(f.deletedEventsJson) setDeletedEvents(JSON.parse(f.deletedEventsJson.stringValue)); }, f=>f);
+                    await fetchDoc('events', f => { if(f.eventsJson) setEvents(JSON.parse(f.eventsJson.stringValue)); }, f=>f);
                     await fetchDoc('prozessionen', f => { if(f.prozessionenJson) setProzessionen(JSON.parse(f.prozessionenJson.stringValue)); }, f=>f);
                     await fetchDoc('notizen', f => { if(f.notizenJson) setNotizen(JSON.parse(f.notizenJson.stringValue)); }, f=>f);
                 } catch(e) {}
+                setIsAppLoading(false);
             };
 
+            // Initiale Lade-Simulation & Fetch (nur wenn ProjektID gesetzt)
             useEffect(() => {
-                if(firebaseProjectId) { fetchAllData().then(() => setIsAppLoading(false)); } 
-                else { setTimeout(() => setIsAppLoading(false), 800); }
+                if(firebaseProjectId) { fetchAllData(); } 
+                else { setIsAppLoading(false); }
             }, [firebaseProjectId]);
 
             const syncDoc = async (docName, fields) => {
@@ -140,30 +162,36 @@
                 await fetch(getFbUrl(docName), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) });
             };
 
+            const syncStatistikToFirebase = async () => {
+                let fields = {};
+                for (const [key, val] of Object.entries(statistik)) fields[key] = { integerValue: String(val) };
+                await syncDoc('statistik', fields);
+                setFirebaseSyncErfolg(true); setTimeout(() => setFirebaseSyncErfolg(false), 3000);
+            };
+
             useEffect(() => { const t = setTimeout(() => syncDoc('gruppen', { gruppenJson: { stringValue: JSON.stringify(gruppen) }, neueMessdienerJson: { stringValue: JSON.stringify(neueMessdiener) } }), 1000); return () => clearTimeout(t); }, [gruppen, neueMessdiener]);
             useEffect(() => { const t = setTimeout(() => syncDoc('regeln', { immerZusammenJson: { stringValue: JSON.stringify(immerZusammen) }, nieZusammenJson: { stringValue: JSON.stringify(nieZusammen) } }), 1000); return () => clearTimeout(t); }, [immerZusammen, nieZusammen]);
             useEffect(() => { const t = setTimeout(() => syncDoc('vormerkungen', { vormerkungenJson: { stringValue: JSON.stringify(vormerkungen) } }), 1000); return () => clearTimeout(t); }, [vormerkungen]);
             useEffect(() => { const t = setTimeout(() => syncDoc('wochenAbwesenheiten', { abwesenheitenJson: { stringValue: JSON.stringify(regelmaessigeAbwesenheiten) } }), 1000); return () => clearTimeout(t); }, [regelmaessigeAbwesenheiten]);
-            useEffect(() => { const t = setTimeout(() => syncDoc('events', { eventsJson: { stringValue: JSON.stringify(events) }, deletedEventsJson: { stringValue: JSON.stringify(deletedEvents) } }), 1000); return () => clearTimeout(t); }, [events, deletedEvents]);
+            useEffect(() => { const t = setTimeout(() => syncDoc('events', { eventsJson: { stringValue: JSON.stringify(events) } }), 1000); return () => clearTimeout(t); }, [events]);
             useEffect(() => { const t = setTimeout(() => syncDoc('prozessionen', { prozessionenJson: { stringValue: JSON.stringify(prozessionen) } }), 1000); return () => clearTimeout(t); }, [prozessionen]);
             useEffect(() => { const t = setTimeout(() => syncDoc('notizen', { notizenJson: { stringValue: JSON.stringify(notizen) } }), 1000); return () => clearTimeout(t); }, [notizen]);
 
-            const saveAdminPasswordToCloud = async (pwd) => {
-                await syncDoc('config', { adminPassword: { stringValue: pwd } });
-                setCloudAdminPassword(pwd);
-            };
+            const alleMinis = gruppen.flatMap(g => g.mitglieder).sort();
+
+            // ==========================================
+            // MARK: - LOGIK & HELPER
+            // ==========================================
+            const toggleNeu = (name) => setNeueMessdiener(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
+            const removeMitglied = (groupId, name) => { setGruppen(prev => prev.map(g => g.id === groupId ? { ...g, mitglieder: g.mitglieder.filter(m => m !== name) } : g)); setNeueMessdiener(prev => prev.filter(n => n !== name)); };
+            const addMitglied = (groupId, name) => { const c = name.trim(); if (!c) return; setGruppen(prev => prev.map(g => (g.id === groupId && !g.mitglieder.includes(c)) ? { ...g, mitglieder: [...g.mitglieder, c] } : g)); if (statistik[c] === undefined) setStatistik(prev => ({ ...prev, [c]: 0 })); };
 
             const normalizeTime = (time) => {
                 if(!time) return "";
                 let clean = time.replace(/h/gi, '').replace(/uhr/gi, '').trim();
                 let parts = clean.split(/[:.]/);
-                if (parts.length === 2) {
-                    let h = parts[0].length === 1 ? `0${parts[0]}` : parts[0];
-                    let m = parts[1].length === 1 ? `${parts[1]}0` : (parts[1] === "" ? "00" : parts[1]);
-                    return `${h}.${m}`;
-                } else if (parts.length === 1 && parts[0] !== "") {
-                    return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.00`;
-                }
+                if (parts.length === 2) { return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.${parts[1].length === 1 ? `${parts[1]}0` : (parts[1] === "" ? "00" : parts[1])}`; }
+                else if (parts.length === 1 && parts[0] !== "") { return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.00`; }
                 return time;
             };
 
@@ -205,7 +233,7 @@
             };
 
             const leseGottesdienste = async () => {
-                if (!apiKey) { setFehlerMeldung("Bitte API-Key hinterlegen."); return; }
+                if (!apiKey) { setFehlerMeldung("Bitte API-Key in den Einstellungen hinterlegen."); return; }
                 if (!pdfFile) { setFehlerMeldung("Bitte PDF wählen."); return; }
                 setLaedt(true); setFehlerMeldung(null); setLadeStatusText("Lese Datei aus...");
                 try {
@@ -237,9 +265,24 @@
                     rawDienste.forEach(raw => {
                         let d = { ...raw, id: crypto.randomUUID(), minis: [], uhrzeit: normalizeTime(raw.uhrzeit || "") };
                         let currentAnlass = d.anlass || "Hl. Messe";
-                        let wId = getWeekIdentifier(d.datum);
-                        if (wochenGruppen[wId]) d.gruppe = wochenGruppen[wId];
-                        bereinigteDienste.push(d);
+                        let isValid = false;
+                        if (["Hl. Messe", "Taufe", "Hochzeit", "Beerdigung", "Osternacht", "Christmette"].includes(currentAnlass)) isValid = true;
+                        else {
+                            let lower = currentAnlass.toLowerCase();
+                            if (lower.includes("taufe")) { currentAnlass = "Taufe"; isValid = true; }
+                            else if (lower.includes("hochzeit") || lower.includes("trauung")) { currentAnlass = "Hochzeit"; isValid = true; }
+                            else if (lower.includes("beerdigung")) { currentAnlass = "Beerdigung"; isValid = true; }
+                            else if (lower.includes("messe") || lower.includes("eucharistie") || lower.includes("hochamt")) { currentAnlass = "Hl. Messe"; isValid = true; }
+                            else if (lower.includes("osternacht")) { currentAnlass = "Osternacht"; isValid = true; }
+                            else if (lower.includes("christmette")) { currentAnlass = "Christmette"; isValid = true; }
+                            else if (lower.includes("gottesdienst")) isValid = true;
+                        }
+                        if (isValid) {
+                            d.anlass = currentAnlass;
+                            let wId = getWeekIdentifier(d.datum);
+                            if (wochenGruppen[wId]) d.gruppe = wochenGruppen[wId];
+                            bereinigteDienste.push(d);
+                        }
                     });
                     setDienste(bereinigteDienste); setAppState('review');
                 } catch (e) { setFehlerMeldung("KI Fehler: " + e.message); } finally { setLaedt(false); }
@@ -294,19 +337,15 @@
                 doc.save("Messdienerplan.pdf");
             };
 
-            const toggleNeu = (name) => setNeueMessdiener(p => p.includes(name) ? p.filter(n => n !== name) : [...p, name]);
-            const removeMitglied = (groupId, name) => { setGruppen(p => p.map(g => g.id === groupId ? { ...g, mitglieder: g.mitglieder.filter(m => m !== name) } : g)); setNeueMessdiener(p => p.filter(n => n !== name)); };
-            const addMitglied = (groupId, name) => { const c = name.trim(); if (!c) return; setGruppen(p => p.map(g => (g.id === groupId && !g.mitglieder.includes(c)) ? { ...g, mitglieder: [...g.mitglieder, c] } : g)); if (statistik[c] === undefined) setStatistik(p => ({ ...p, [c]: 0 })); };
-
             const value = {
                 route, setRoute, activeTab, setActiveTab, isAppLoading, laedt, setLaedt, ladeStatusText, setLadeStatusText, fehlerMeldung, setFehlerMeldung, appState, setAppState,
-                apiKey, setApiKey, adminPassword, setAdminPassword, cloudAdminPassword, saveAdminPasswordToCloud, geminiModel, setGeminiModel, firebaseProjectId, setFirebaseProjectId,
+                apiKey, setApiKey, geminiModel, setGeminiModel, firebaseProjectId, setFirebaseProjectId,
                 anzahlSonntags, setAnzahlSonntags, anzahlWerktags, setAnzahlWerktags,
                 gruppen, setGruppen, neueMessdiener, setNeueMessdiener, immerZusammen, setImmerZusammen, nieZusammen, setNieZusammen, statistik, setStatistik,
                 dienste, setDienste, vormerkungen, setVormerkungen, regelmaessigeAbwesenheiten, setRegelmaessigeAbwesenheiten, notizen, setNotizen, events, setEvents, prozessionen, setProzessionen,
                 customGroupDateRanges, setCustomGroupDateRanges, nextGroup1, setNextGroup1, nextGroup2, setNextGroup2, pdfFile, setPdfFile,
-                alleMinis: gruppen.flatMap(g => g.mitglieder).sort(), getChronologischeBloecke, leseGottesdienste, teileEin, resetApp: () => { setAppState('upload'); setDienste([]); setPdfFile(null); }, exportierePDF,
-                toggleNeu, removeMitglied, addMitglied, parseDateStr
+                alleMinis, getChronologischeBloecke, leseGottesdienste, teileEin, resetApp: () => { setAppState('upload'); setDienste([]); setPdfFile(null); }, exportierePDF,
+                toggleNeu, removeMitglied, addMitglied, parseDateStr, fetchAllData, syncStatistikToFirebase, firebaseSyncErfolg
             };
             return <ViewModelContext.Provider value={value}>{children}</ViewModelContext.Provider>;
         }
@@ -314,22 +353,42 @@
         const useViewModel = () => useContext(ViewModelContext);
 
         // ==========================================
-        // MARK: - COMPONENTS & VIEWS
+        // MARK: - APP ROUTER & OVERLAYS
         // ==========================================
 
-        function SetupOverlay() {
+        function AdminSetupOverlay() {
             const vm = useViewModel();
             const [proj, setProj] = useState("");
             const [key, setKey] = useState("");
+
             return (
                 <div className="fixed inset-0 z-[100] bg-[#ececec] flex items-center justify-center p-4">
-                    <div className="bg-white p-10 rounded-3xl shadow-xl max-w-md w-full text-center">
-                        <i className="fa-solid fa-database text-5xl text-blue-500 mb-6"></i>
-                        <h2 className="text-2xl font-bold text-gray-900 mb-2">Ersteinrichtung</h2>
-                        <p className="text-gray-500 mb-6">Bitte gib die Zugangsdaten ein, um das Gerät mit der Datenbank zu koppeln.</p>
-                        <input type="text" placeholder="Firebase Projekt-ID..." className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-4 outline-none focus:border-blue-500" value={proj} onChange={e => setProj(e.target.value)} />
-                        <input type="password" placeholder="Gemini API Key..." className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-6 outline-none focus:border-blue-500" value={key} onChange={e => setKey(e.target.value)} />
-                        <button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg py-3 rounded-xl transition disabled:opacity-50" disabled={!key.trim() || !proj.trim()} onClick={() => { vm.setFirebaseProjectId(proj.trim()); vm.setApiKey(key.trim()); }}>Speichern & Starten</button>
+                    <div className="bg-white p-10 rounded-3xl shadow-xl max-w-md w-full text-center relative">
+                        <button onClick={() => vm.setRoute('landing')} className="absolute top-6 left-6 text-gray-400 hover:text-gray-800"><i className="fa-solid fa-arrow-left text-xl"></i></button>
+                        <i className="fa-solid fa-database text-5xl text-blue-500 mb-6 mt-4"></i>
+                        <h2 className="text-2xl font-bold text-gray-900 mb-2">Admin Einrichtung</h2>
+                        <p className="text-gray-500 mb-6">Bitte gib die Zugangsdaten für die Datenbank ein.</p>
+                        <input type="password" value={proj} onChange={e=>setProj(e.target.value)} placeholder="Firebase Projekt ID..." className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-4 outline-none focus:border-blue-500 text-center" />
+                        <input type="password" value={key} onChange={e=>setKey(e.target.value)} placeholder="Gemini API Key..." className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-6 outline-none focus:border-blue-500 text-center" />
+                        <button disabled={!proj.trim() || !key.trim()} onClick={() => { vm.setFirebaseProjectId(proj.trim()); vm.setApiKey(key.trim()); }} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-lg py-3 rounded-xl transition">Speichern & Starten</button>
+                    </div>
+                </div>
+            );
+        }
+
+        function PfarrbueroSetupOverlay() {
+            const vm = useViewModel();
+            const [pwd, setPwd] = useState("");
+
+            return (
+                <div className="fixed inset-0 z-[100] bg-[#ececec] flex items-center justify-center p-4">
+                    <div className="bg-white p-10 rounded-3xl shadow-xl max-w-md w-full text-center relative">
+                        <button onClick={() => vm.setRoute('landing')} className="absolute top-6 left-6 text-gray-400 hover:text-gray-800"><i className="fa-solid fa-arrow-left text-xl"></i></button>
+                        <i className="fa-solid fa-lock text-5xl text-blue-500 mb-6 mt-4"></i>
+                        <h2 className="text-2xl font-bold text-gray-900 mb-2">Zugang gesperrt</h2>
+                        <p className="text-gray-500 mb-6">Bitte gib das Zugangspasswort für das Pfarrbüro ein.</p>
+                        <input type="password" value={pwd} onChange={e=>setPwd(e.target.value)} placeholder="Passwort..." className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-6 outline-none focus:border-blue-500 text-center" />
+                        <button disabled={!pwd.trim()} onClick={() => vm.setFirebaseProjectId(pwd.trim())} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-lg py-3 rounded-xl transition">Entsperren</button>
                     </div>
                 </div>
             );
@@ -337,34 +396,6 @@
 
         function LandingPage() {
             const vm = useViewModel();
-            const [showAdminLogin, setShowAdminLogin] = useState(false);
-            const [pwdInput, setPwdInput] = useState("");
-
-            const handleAdminLogin = () => {
-                if (!vm.cloudAdminPassword) {
-                    if(pwdInput.length > 3) { vm.saveAdminPasswordToCloud(pwdInput); vm.setAdminPassword(pwdInput); vm.setRoute('admin'); } 
-                    else alert("Passwort muss mindestens 4 Zeichen lang sein.");
-                } else {
-                    if (pwdInput === vm.cloudAdminPassword) { vm.setAdminPassword(pwdInput); vm.setRoute('admin'); } 
-                    else alert("Falsches Passwort!");
-                }
-            };
-
-            if (showAdminLogin) {
-                return (
-                    <div className="flex h-screen w-full items-center justify-center bg-[#ececec] p-4">
-                        <div className="bg-white p-10 rounded-3xl shadow-xl max-w-md w-full text-center relative">
-                            <button onClick={() => setShowAdminLogin(false)} className="absolute top-6 left-6 text-gray-400 hover:text-gray-800"><i className="fa-solid fa-arrow-left text-xl"></i></button>
-                            <i className="fa-solid fa-lock text-5xl text-gray-800 mb-6 mt-4"></i>
-                            <h2 className="text-2xl font-bold text-gray-900 mb-2">Admin-Bereich</h2>
-                            <p className="text-gray-500 mb-8">{!vm.cloudAdminPassword ? "Erstelle jetzt dein Admin-Passwort:" : "Bitte gib dein Admin-Passwort ein:"}</p>
-                            <input type="password" placeholder="Passwort..." value={pwdInput} onChange={e => setPwdInput(e.target.value)} onKeyDown={e => e.key==='Enter' && handleAdminLogin()} className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-6 outline-none focus:border-gray-800 text-center" />
-                            <button onClick={handleAdminLogin} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-lg py-3 rounded-xl transition">Einloggen</button>
-                        </div>
-                    </div>
-                );
-            }
-
             return (
                 <div className="flex h-screen w-full items-center justify-center bg-white p-4">
                     <div className="max-w-lg w-full text-center flex flex-col items-center">
@@ -372,7 +403,7 @@
                         <h1 className="text-4xl md:text-5xl font-black text-gray-900 mb-2 tracking-tight">Messdienerplan</h1>
                         <h2 className="text-2xl font-bold text-blue-600 mb-12">Thalau</h2>
                         <div className="w-full space-y-4 px-4">
-                            <button onClick={() => { if(vm.adminPassword && vm.adminPassword === vm.cloudAdminPassword) vm.setRoute('admin'); else setShowAdminLogin(true); }} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-xl py-4 rounded-2xl shadow-lg transition flex items-center justify-center"><i className="fa-solid fa-desktop mr-3"></i>Planer öffnen</button>
+                            <button onClick={() => vm.setRoute('admin')} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-xl py-4 rounded-2xl shadow-lg transition flex items-center justify-center"><i className="fa-solid fa-desktop mr-3"></i>Planer öffnen</button>
                             <button onClick={() => vm.setRoute('pfarrbuero')} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-700 font-bold text-xl py-4 rounded-2xl transition flex items-center justify-center"><i className="fa-solid fa-calendar-check mr-3"></i>Messdiener Vormerken</button>
                         </div>
                     </div>
@@ -380,9 +411,11 @@
             );
         }
 
+        // --- PFARRBÜRO VIEW (Mobil optimiert) ---
         function PfarrbueroView() {
             const vm = useViewModel();
             const [datum, setDatum] = useState(''); const [anlass, setAnlass] = useState(''); const [uhrzeit, setUhrzeit] = useState(''); const [minis, setMinis] = useState([""]);
+
             const handleSave = () => {
                 if(!datum) { alert("Bitte ein Datum eingeben!"); return; }
                 const parts = datum.split('-'); let wt = "Sonntag";
@@ -391,11 +424,18 @@
                 vm.setVormerkungen([...vm.vormerkungen, { id: crypto.randomUUID(), datum: formattedDate, wochentag: wt, uhrzeit: uhrzeit, anlass: anlass || "Gottesdienst", minis: minis.filter(m => m.trim() !== "") }]);
                 alert("Erfolgreich vorgemerkt!"); setDatum(''); setAnlass(''); setUhrzeit(''); setMinis([""]); vm.setRoute('landing');
             };
+
             return (
                 <div className="min-h-screen bg-gray-50 flex flex-col">
-                    <div className="bg-blue-600 text-white p-4 pt-10 flex items-center shadow-md sticky top-0 z-10"><button onClick={() => vm.setRoute('landing')} className="text-white hover:text-blue-200 p-2"><i className="fa-solid fa-chevron-left text-xl"></i></button><h1 className="text-xl font-bold ml-4 flex-1">Vormerken (Pfarrbüro)</h1></div>
+                    <div className="bg-blue-600 text-white p-4 pt-10 flex items-center shadow-md sticky top-0 z-10">
+                        <button onClick={() => vm.setRoute('landing')} className="text-white hover:text-blue-200 p-2"><i className="fa-solid fa-chevron-left text-xl"></i></button>
+                        <h1 className="text-xl font-bold ml-4 flex-1">Vormerken (Pfarrbüro)</h1>
+                    </div>
                     <div className="p-6 flex-1 max-w-2xl mx-auto w-full">
-                        <div className="bg-blue-50 text-blue-800 p-4 rounded-xl mb-8 text-sm leading-relaxed border border-blue-100"><i className="fa-solid fa-circle-info mr-2"></i>Hier können Sie Messdiener für einen bestimmten Gottesdienst eintragen.</div>
+                        <div className="bg-blue-50 text-blue-800 p-4 rounded-xl mb-8 text-sm leading-relaxed border border-blue-100">
+                            <i className="fa-solid fa-circle-info mr-2"></i>
+                            Hier können Sie Messdiener eintragen, die sich bereits für einen bestimmten Gottesdienst gemeldet haben.
+                        </div>
                         <div className="space-y-6">
                             <div className="ios-card p-5 border border-gray-100"><label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Datum *</label><input type="date" value={datum} onChange={e => setDatum(e.target.value)} className="w-full text-lg border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent" /></div>
                             <div className="ios-card p-5 border border-gray-100 flex space-x-4"><div className="flex-1"><label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Uhrzeit</label><input type="text" placeholder="z.B. 09.30" value={uhrzeit} onChange={e => setUhrzeit(e.target.value)} className="w-full text-lg border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent" /></div><div className="flex-1"><label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Anlass</label><input type="text" placeholder="z.B. Taufe" value={anlass} onChange={e => setAnlass(e.target.value)} className="w-full text-lg border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent" /></div></div>
@@ -406,180 +446,6 @@
                 </div>
             );
         }
-
-        // --- ADMIN VIEWS ---
-        function MobileTopBar({ title }) {
-            const vm = useViewModel();
-            return (
-                <div className="md:hidden bg-white text-gray-900 p-4 pt-10 flex items-center shadow-sm sticky top-0 z-50 border-b border-gray-200">
-                    <button onClick={() => vm.setActiveTab('menu')} className="text-blue-600 hover:text-blue-800 p-2 pl-0"><i className="fa-solid fa-chevron-left text-xl mr-1"></i> Menü</button>
-                    <h1 className="text-xl font-bold ml-2 flex-1 truncate">{title}</h1>
-                </div>
-            );
-        }
-
-        function PlanerView() {
-            const vm = useViewModel();
-            const bloecke = vm.getChronologischeBloecke();
-            return (
-                <div className="flex flex-col md:flex-row h-full w-full">
-                    <MobileTopBar title="Planer" />
-                    <div className="w-full md:w-[400px] lg:w-[450px] bg-white p-6 md:p-10 border-b md:border-b-0 md:border-r border-gray-200 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-10 flex flex-col shrink-0">
-                        {vm.appState === 'upload' && (
-                            <div className="flex flex-col h-full justify-center">
-                                <h2 className="text-2xl md:text-3xl font-bold text-gray-900">1. Pfarrbrief hochladen</h2>
-                                <p className="text-gray-500 text-sm md:text-lg mt-2 mb-6">Lade den aktuellen Pfarrbrief als PDF hoch.</p>
-                                <label className={`w-full h-64 md:h-80 border-4 border-dashed rounded-3xl flex flex-col items-center justify-center cursor-pointer transition ${vm.pdfFile ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50 hover:bg-gray-100'}`}>
-                                    <i className={`fa-solid ${vm.pdfFile ? 'fa-file-circle-check text-blue-500' : 'fa-file-pdf text-gray-400'} text-5xl md:text-6xl mb-4`}></i>
-                                    <span className={`text-lg md:text-xl font-bold text-center px-4 ${vm.pdfFile ? 'text-blue-600' : 'text-gray-500'}`}>{vm.pdfFile ? vm.pdfFile.name : 'PDF Datei hierher ziehen'}</span>
-                                    <input type="file" accept="application/pdf" className="hidden" onChange={e => vm.setPdfFile(e.target.files[0])} />
-                                </label>
-                                <button onClick={vm.leseGottesdienste} disabled={vm.laedt || !vm.pdfFile} className="mt-6 w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-lg font-bold py-4 rounded-xl shadow-lg transition flex justify-center items-center">
-                                    {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-3"></i> : <i className="fa-solid fa-wand-magic-sparkles mr-3"></i>}{vm.laedt ? vm.ladeStatusText : 'Extrahieren'}
-                                </button>
-                                {vm.fehlerMeldung && <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-lg text-sm font-medium"><i className="fa-solid fa-triangle-exclamation mr-2"></i>{vm.fehlerMeldung}</div>}
-                            </div>
-                        )}
-                        {vm.appState === 'review' && (
-                            <div className="flex flex-col h-full justify-center">
-                                <h2 className="text-2xl md:text-3xl font-bold text-gray-900">2. Abgleichen</h2>
-                                <p className="text-gray-500 mt-2 mb-6">Prüfe die erkannten Termine.</p>
-                                <button onClick={vm.teileEin} disabled={vm.laedt} className="w-full bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold py-4 rounded-xl shadow-lg transition flex justify-center items-center">
-                                    {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-3"></i> : <i className="fa-solid fa-users mr-3"></i>}{vm.laedt ? vm.ladeStatusText : 'Jetzt Einteilen'}
-                                </button>
-                                <button onClick={vm.resetApp} className="mt-3 w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">Neuen Plan starten</button>
-                            </div>
-                        )}
-                        {vm.appState === 'assigned' && (
-                            <div className="flex flex-col h-full justify-center">
-                                <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-6">Fertig!</h2>
-                                <button onClick={vm.exportierePDF} className="w-full bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold py-4 rounded-xl shadow-lg transition"><i className="fa-solid fa-print mr-3"></i>Als PDF exportieren</button>
-                                <button onClick={vm.resetApp} className="mt-3 w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">Neuen Plan starten</button>
-                            </div>
-                        )}
-                    </div>
-                    <div className="flex-1 bg-gray-50/50 p-4 md:p-10 overflow-y-auto relative">
-                        {vm.laedt && vm.appState !== 'upload' && <div className="absolute inset-0 z-50 bg-white/60 backdrop-blur-sm flex items-center justify-center"><i className="fa-solid fa-circle-notch fa-spin text-4xl text-blue-500"></i></div>}
-                        {vm.dienste.length === 0 && !vm.laedt ? (
-                            <div className="h-full flex flex-col justify-center items-center text-gray-400 py-20"><i className="fa-solid fa-inbox text-5xl md:text-7xl mb-4 opacity-50"></i><p className="text-lg md:text-xl font-medium text-center">Hier erscheinen die Termine.</p></div>
-                        ) : (
-                            <div className="max-w-6xl mx-auto pb-20">
-                                <h1 className="text-2xl md:text-4xl font-extrabold text-gray-900 mb-6 hidden md:block">Gottesdienste</h1>
-                                {bloecke.map((block, idx) => (
-                                    <div key={idx} className="mb-8 md:mb-12">
-                                        <div className="flex items-center space-x-2 mb-4 md:mb-6">
-                                            <select className="bg-transparent text-xl md:text-2xl font-bold text-gray-900 outline-none" value={block.gruppe} onChange={()=>{}}>
-                                                <option value="Ohne Gruppe">Nicht zugeordnet</option>
-                                                {vm.gruppen.map(g => <option key={g.name} value={g.name}>Gruppe {g.name}</option>)}
-                                            </select>
-                                        </div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                                            {block.dienste.map(d => (
-                                                <div key={d.id} className="bg-white rounded-2xl p-5 shadow-[0_4px_15px_rgba(0,0,0,0.04)] border border-gray-100">
-                                                    <p className="text-blue-500 font-bold text-xs md:text-sm">{d.wochentag}, {d.datum}</p>
-                                                    <p className="text-2xl md:text-3xl font-black tracking-tight mt-1 text-gray-800">{d.uhrzeit}</p>
-                                                    <p className="text-gray-500 font-medium text-sm md:text-base line-clamp-2 mt-2">{d.anlass}</p>
-                                                    <hr className="my-3 border-gray-100" />
-                                                    {vm.appState === 'assigned' ? (
-                                                        <div className="space-y-1 md:space-y-2 min-h-[30px]">
-                                                            {d.minis.length === 0 ? <p className="text-red-500 font-bold">-</p> : d.minis.map(m => <div key={m} className="flex items-center space-x-2"><i className="fa-solid fa-user text-gray-400 text-xs"></i><span className="font-semibold text-gray-800 text-sm md:text-base">{m}</span></div>)}
-                                                        </div>
-                                                    ) : <p className="text-gray-400 text-xs md:text-sm italic">Wird festgelegt</p>}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            );
-        }
-
-        function MessdienerView() {
-            const vm = useViewModel();
-            const [neuerNameInputs, setNeuerNameInputs] = useState({});
-            const handleAdd = (groupId) => { const name = neuerNameInputs[groupId] || ""; vm.addMitglied(groupId, name); setNeuerNameInputs({ ...neuerNameInputs, [groupId]: "" }); };
-            return (
-                <div className="h-full flex flex-col">
-                    <MobileTopBar title="Messdiener" />
-                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
-                        <div className="max-w-4xl mx-auto md:mx-0">
-                            <div className="hidden md:flex justify-between items-end mb-8">
-                                <div><h1 className="text-3xl font-bold text-gray-900">Gruppen ({vm.gruppen.length}/6)</h1></div>
-                                <button onClick={() => { if(vm.gruppen.length < 6) vm.setGruppen([...vm.gruppen, { id: crypto.randomUUID(), name: String.fromCharCode(65 + vm.gruppen.length), mitglieder: [] }]); }} className="bg-white border border-gray-300 px-4 py-2 rounded-lg text-sm font-medium shadow-sm"><i className="fa-solid fa-plus mr-2"></i>Gruppe hinzufügen</button>
-                            </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
-                                {vm.gruppen.map(gruppe => (
-                                    <div key={gruppe.id} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                                        <div className="flex justify-between items-center mb-4">
-                                            <div className="flex items-center space-x-2"><span className="font-bold text-lg text-gray-800">Gruppe</span><input type="text" value={gruppe.name} onChange={(e) => vm.setGruppen(vm.gruppen.map(g => g.id === gruppe.id ? {...g, name: e.target.value} : g))} className="font-bold text-lg w-12 border-b border-transparent focus:border-blue-500 focus:bg-gray-50 outline-none" /></div>
-                                            <button onClick={() => vm.setGruppen(vm.gruppen.filter(g => g.id !== gruppe.id))} className="text-red-500"><i className="fa-solid fa-trash"></i></button>
-                                        </div>
-                                        <div className="space-y-2 mb-4 max-h-48 overflow-y-auto pr-1">
-                                            {gruppe.mitglieder.map(m => (
-                                                <div key={m} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-md border border-gray-100 shadow-sm"><span className="text-sm font-medium text-gray-800">{m}</span><div className="flex items-center space-x-3"><button onClick={() => vm.toggleNeu(m)} className={vm.neueMessdiener.includes(m) ? "text-yellow-500" : "text-gray-300"}><i className={`fa-star ${vm.neueMessdiener.includes(m) ? 'fa-solid' : 'fa-regular'}`}></i></button><button onClick={() => vm.removeMitglied(gruppe.id, m)} className="text-gray-400 hover:text-red-500"><i className="fa-solid fa-circle-xmark"></i></button></div></div>
-                                            ))}
-                                        </div>
-                                        <div className="flex items-center space-x-2">
-                                            <input type="text" placeholder="Neuer Name" value={neuerNameInputs[gruppe.id] || ""} onChange={e => setNeuerNameInputs({...neuerNameInputs, [gruppe.id]: e.target.value})} onKeyDown={e => e.key === 'Enter' && handleAdd(gruppe.id)} className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm outline-none focus:border-blue-500" />
-                                            <button onClick={() => handleAdd(gruppe.id)} className="text-green-500"><i className="fa-solid fa-circle-plus text-2xl"></i></button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-
-        function VormerkenView() {
-            const vm = useViewModel();
-            const wochentage = [{id: 2, n: 'Mo'}, {id: 3, n: 'Di'}, {id: 4, n: 'Mi'}, {id: 5, n: 'Do'}, {id: 6, n: 'Fr'}, {id: 7, n: 'Sa'}, {id: 1, n: 'So'}];
-            const sorted = [...vm.vormerkungen].sort((a, b) => (vm.parseDateStr(a.datum)||0) - (vm.parseDateStr(b.datum)||0));
-            return (
-                <div className="h-full flex flex-col">
-                    <MobileTopBar title="Vormerken" />
-                    <div className="flex-1 overflow-y-auto p-4 md:p-10 bg-gray-50/50">
-                        <div className="max-w-5xl mx-auto md:mx-0 pb-12">
-                            <div className="hidden md:block mb-8"><h1 className="text-3xl font-bold text-gray-900">Vorgemerkte Messdiener</h1></div>
-                            {sorted.length === 0 ? (
-                                <div className="text-center p-8 bg-white border border-dashed border-gray-300 rounded-xl mb-8"><p className="text-gray-500">Keine speziellen Gottesdienste vorgemerkt. (Nutze das Pfarrbüro-Portal dafür!)</p></div>
-                            ) : (
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 mb-10">
-                                    {sorted.map(v => (
-                                        <div key={v.id} className="bg-white p-5 rounded-2xl border border-purple-200 shadow-sm relative">
-                                            <button onClick={() => vm.setVormerkungen(vm.vormerkungen.filter(x => x.id !== v.id))} className="absolute top-4 right-4 text-gray-300 hover:text-red-500"><i className="fa-solid fa-trash"></i></button>
-                                            <p className="text-purple-600 font-bold text-xs">{v.wochentag}, {v.datum}</p>
-                                            <p className="text-xl font-black text-gray-900 mt-1">{v.uhrzeit || 'Variabel'}</p>
-                                            <p className="text-gray-500 text-sm font-medium mb-3 truncate">{v.anlass}</p>
-                                            <div className="space-y-1">{v.minis.map(m => <div key={m} className="flex items-center space-x-2"><i className="fa-solid fa-thumbtack text-purple-400 text-xs"></i><span className="text-sm font-semibold">{m}</span></div>)}</div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                            <div className="flex justify-between items-end mb-4 md:mb-6 mt-8"><h2 className="text-xl md:text-2xl font-bold text-gray-900">Wöchentliche Abwesenheiten</h2><button onClick={() => vm.setRegelmaessigeAbwesenheiten([...vm.regelmaessigeAbwesenheiten, { id: crypto.randomUUID(), name: '', wochentage: [] }])} className="bg-white border border-gray-300 px-3 py-1 md:px-4 md:py-2 rounded-lg text-sm font-medium"><i className="fa-solid fa-plus md:mr-2"></i><span className="hidden md:inline">Person</span></button></div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-                                {vm.regelmaessigeAbwesenheiten.map(regel => (
-                                    <div key={regel.id} className="bg-white rounded-xl border border-gray-200 p-4 md:p-6 shadow-sm">
-                                        <div className="flex justify-between items-center mb-4 md:mb-6"><AutocompleteField value={regel.name} onChange={val => vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.map(r => r.id === regel.id ? {...r, name: val} : r))} suggestions={vm.alleMinis} placeholder="Name..." className="font-bold text-lg border-b border-gray-300 focus:border-blue-500 outline-none w-2/3 bg-transparent pb-1" /><button onClick={() => vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.filter(r => r.id !== regel.id))} className="text-red-400"><i className="fa-solid fa-trash"></i></button></div>
-                                        <div className="flex justify-between">
-                                            {wochentage.map(tag => {
-                                                const act = regel.wochentage.includes(tag.id);
-                                                return <button key={tag.id} onClick={() => { const n = act ? regel.wochentage.filter(t=>t!==tag.id) : [...regel.wochentage, tag.id]; vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.map(r => r.id === regel.id ? {...r, wochentage: n} : r)); }} className={`w-8 h-8 md:w-10 md:h-10 rounded-lg font-bold text-xs md:text-sm transition-all ${act ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-500'}`}>{tag.n}</button>;
-                                            })}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-
         // --- DASHBOARD (MOBILE ONLY) ---
         function AdminDashboard() {
             const vm = useViewModel();
@@ -591,18 +457,25 @@
                 { id: 'statistik', label: 'Statistik', icon: 'fa-solid fa-chart-column', color: 'bg-orange-500' },
                 { id: 'notizen', label: 'Notizen', icon: 'fa-regular fa-note-sticky', color: 'bg-yellow-500' },
                 { id: 'messdiener', label: 'Gruppen', icon: 'fa-solid fa-user-group', color: 'bg-indigo-500' },
-                { id: 'einstellungen', label: 'Optionen', icon: 'fa-solid fa-gear', color: 'bg-gray-500' }
+                { id: 'einstellungen', label: 'Optionen', icon: 'fa-solid fa-gear', color: 'bg-gray-500' },
+                { id: 'werkzeuge', label: 'Tools', icon: 'fa-solid fa-screwdriver-wrench', color: 'bg-teal-500' }
             ];
+
             return (
                 <div className="min-h-screen bg-[#f2f2f7] p-6 pb-12 flex flex-col antialiased">
                     <div className="flex justify-between items-end mb-8 pt-8">
                         <h1 className="text-4xl font-black text-gray-900 tracking-tight">Übersicht</h1>
-                        <button onClick={() => vm.setRoute('landing')} className="bg-white px-4 py-2 rounded-full shadow-sm text-sm font-bold text-red-500 border border-gray-200"><i className="fa-solid fa-power-off mr-2"></i>Abmelden</button>
+                        {/* Abmelden-Button setzt die Route wieder auf Landing zurück, falls man das Gerät wechseln will */}
+                        <button onClick={() => { vm.setRoute('landing'); vm.setAdminPassword(''); }} className="bg-white px-4 py-2 rounded-full shadow-sm text-sm font-bold text-red-500 border border-gray-200">
+                            <i className="fa-solid fa-power-off mr-2"></i>Abmelden
+                        </button>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                         {tiles.map(t => (
                             <div key={t.id} onClick={() => vm.setActiveTab(t.id)} className="ios-card p-6 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform">
-                                <div className={`w-14 h-14 ${t.color} text-white rounded-full flex items-center justify-center text-2xl mb-3 shadow-md`}><i className={t.icon}></i></div>
+                                <div className={`w-14 h-14 ${t.color} text-white rounded-full flex items-center justify-center text-2xl mb-3 shadow-md`}>
+                                    <i className={t.icon}></i>
+                                </div>
                                 <span className="font-bold text-gray-800 text-[15px]">{t.label}</span>
                             </div>
                         ))}
@@ -611,40 +484,64 @@
             );
         }
 
-        // --- APP CONTROLLER ---
+        // --- APP CONTROLLER (Admin) ---
         function AdminApp() {
             const vm = useViewModel();
             const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-            useEffect(() => { const handleResize = () => setIsMobile(window.innerWidth < 768); window.addEventListener('resize', handleResize); return () => window.removeEventListener('resize', handleResize); }, []);
-            
-            if (isMobile && (!vm.activeTab || vm.activeTab === 'menu')) return <AdminDashboard />;
+
+            useEffect(() => {
+                const handleResize = () => setIsMobile(window.innerWidth < 768);
+                window.addEventListener('resize', handleResize);
+                return () => window.removeEventListener('resize', handleResize);
+            }, []);
+
+            // Mobile Ansicht: Zeigt das Dashboard, wenn "menu" aktiv ist
+            if (isMobile && (!vm.activeTab || vm.activeTab === 'menu')) {
+                return <AdminDashboard />;
+            }
 
             return (
                 <div className="flex h-screen w-full bg-macBg text-[#1d1d1f] antialiased">
                     {!isMobile && <Sidebar/>}
                     <div className="flex-1 flex flex-col bg-white overflow-hidden shadow-[-4px_0_15px_rgba(0,0,0,0.05)] z-10 relative">
                         {vm.activeTab === 'planer' && <PlanerView/>}
+                        {vm.activeTab === 'prozessionen' && <ProzessionenView/>}
+                        {vm.activeTab === 'events' && <EventsView/>}
                         {vm.activeTab === 'vormerken' && <VormerkenView/>}
+                        {vm.activeTab === 'statistik' && <StatistikView/>}
+                        {vm.activeTab === 'notizen' && <NotizenView/>}
+                        {vm.activeTab === 'werkzeuge' && <WerkzeugeView/>}
                         {vm.activeTab === 'messdiener' && <MessdienerView/>}
-                        {(!['planer', 'vormerken', 'messdiener'].includes(vm.activeTab)) && <div className="p-10 text-center text-gray-400 mt-20"><i className="fa-solid fa-person-digging text-6xl mb-4"></i><p>Ansicht {vm.activeTab} folgt...</p><button onClick={()=>vm.setActiveTab(isMobile?'menu':'planer')} className="mt-6 text-blue-500">Zurück</button></div>}
+                        {vm.activeTab === 'einstellungen' && <EinstellungenView/>}
                     </div>
                 </div>
             );
         }
 
+        // --- HAUPT-ROUTING ---
         function App() {
             const vm = useViewModel();
 
             if (vm.isAppLoading) {
-                return <div className="flex h-screen w-full items-center justify-center bg-white flex-col space-y-6"><i className="fa-solid fa-cloud text-blue-500 text-7xl animate-bounce"></i><h2 className="text-3xl font-bold text-gray-800">Lade Daten...</h2></div>;
+                return (
+                    <div className="flex h-screen w-full items-center justify-center bg-white flex-col space-y-6">
+                        <i className="fa-solid fa-cloud text-blue-500 text-7xl animate-bounce"></i>
+                        <h2 className="text-3xl font-bold text-gray-800 mb-2">Lade Daten...</h2>
+                    </div>
+                );
             }
 
-            if (!vm.apiKey || !vm.firebaseProjectId) return <SetupOverlay />;
+            // Wenn der Nutzer den "Admin"-Pfad gewählt hat (und eingeloggt ist)
+            if (vm.route === 'admin') {
+                // Das Setup-Overlay wird NUR im Admin-Bereich gezeigt und nur wenn die Daten noch fehlen
+                if (!vm.apiKey || !vm.firebaseProjectId) return <AdminSetupOverlay />;
+                return <AdminApp />;
+            }
 
-            if (vm.route === 'landing') return <LandingPage />;
+            // Wenn der Nutzer den "Pfarrbüro"-Pfad gewählt hat
             if (vm.route === 'pfarrbuero') return <PfarrbueroView />;
-            if (vm.route === 'admin') return <AdminApp />;
             
+            // Standard: Startseite / Landing Page
             return <LandingPage />;
         }
 
