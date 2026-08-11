@@ -21,8 +21,8 @@
     </script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
@@ -65,7 +65,7 @@
         const ViewModelContext = createContext();
 
         function ViewModelProvider({ children }) {
-            const [route, setRoute] = useState('landing'); 
+            const [route, setRoute] = useAppStorage('appRoute', 'landing'); 
             const [activeTab, setActiveTab] = useState('planer'); 
             const [isAppLoading, setIsAppLoading] = useState(true);
             const [appState, setAppState] = useAppStorage('appStateRaw', 'upload'); 
@@ -97,7 +97,7 @@
             const [prozessionen, setProzessionen] = useAppStorage('prozessionenData', []);
             const [pdfFile, setPdfFile] = useState(null);
 
-            // Auto-Login über URL
+            // Auto-Login über URL Parameter
             useEffect(() => { const urlParams = new URLSearchParams(window.location.search); const projectId = urlParams.get('id'); if (projectId && projectId.length > 5) setFirebaseProjectId(projectId.trim()); }, []);
 
             const getFbUrl = (docName) => `https://firestore.googleapis.com/v1/projects/${firebaseProjectId.trim()}/databases/(default)/documents/messdiener/${docName}`;
@@ -115,6 +115,9 @@
                     await fetchDoc('events', f => { if(f.eventsJson) setEvents(JSON.parse(f.eventsJson.stringValue)); }, f=>f);
                     await fetchDoc('prozessionen', f => { if(f.prozessionenJson) setProzessionen(JSON.parse(f.prozessionenJson.stringValue)); }, f=>f);
                     await fetchDoc('notizen', f => { if(f.notizenJson) setNotizen(JSON.parse(f.notizenJson.stringValue)); }, f=>f);
+                    
+                    // LADE AKTUELLEN PLAN (Mac App als Chef!)
+                    await fetchDoc('aktuellerPlan', f => { if(f.planDataJson) { const parsed = JSON.parse(f.planDataJson.stringValue); setDienste(parsed); setAppState('assigned'); } }, f=>f);
                 } catch(e) {}
             };
 
@@ -122,6 +125,10 @@
 
             const syncDoc = async (docName, fields) => { if (!firebaseProjectId.trim()) return; await fetch(getFbUrl(docName), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) }); };
             
+            const syncStatistikToFirebase = async () => {
+                let fields = {}; for (const [key, val] of Object.entries(statistik)) fields[key] = { integerValue: String(val) }; await syncDoc('statistik', fields);
+            };
+
             useEffect(() => { const t = setTimeout(() => syncDoc('gruppen', { gruppenJson: { stringValue: JSON.stringify(gruppen) }, neueMessdienerJson: { stringValue: JSON.stringify(neueMessdiener) } }), 1000); return () => clearTimeout(t); }, [gruppen, neueMessdiener]);
             useEffect(() => { const t = setTimeout(() => syncDoc('vormerkungen', { vormerkungenJson: { stringValue: JSON.stringify(vormerkungen) } }), 1000); return () => clearTimeout(t); }, [vormerkungen]);
             useEffect(() => { const t = setTimeout(() => syncDoc('wochenAbwesenheiten', { abwesenheitenJson: { stringValue: JSON.stringify(regelmaessigeAbwesenheiten) } }), 1000); return () => clearTimeout(t); }, [regelmaessigeAbwesenheiten]);
@@ -133,170 +140,18 @@
 
             const alleMinis = gruppen.flatMap(g => g.mitglieder).sort();
 
-            // Globale Planer Logik
             const parseDateStr = (str) => { if (!str) return null; const parts = str.match(/\d+/g); if (!parts || parts.length < 2) return null; return new Date(parts.length >= 3 ? parseInt(parts[2]) : new Date().getFullYear(), parseInt(parts[1]) - 1, parseInt(parts[0])); };
             const normalizeTime = (time) => { if(!time) return ""; let clean = time.replace(/h/gi, '').replace(/uhr/gi, '').trim(); let parts = clean.split(/[:.]/); if (parts.length === 2) return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.${parts[1].length === 1 ? `${parts[1]}0` : (parts[1] === "" ? "00" : parts[1])}`; else if (parts.length === 1 && parts[0] !== "") return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.00`; return time; };
-            const getWeekIdentifier = (dateStr) => { const d = parseDateStr(dateStr); if (!d) return crypto.randomUUID(); const dCopy = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); dCopy.setUTCDate(dCopy.getUTCDate() + 4 - (dCopy.getUTCDay() || 7)); const yearStart = new Date(Date.UTC(dCopy.getUTCFullYear(),0,1)); return `${dCopy.getUTCFullYear()}-${Math.ceil((((dCopy - yearStart) / 86400000) + 1)/7).toString().padStart(2, '0')}`; };
-
-            const getChronologischeBloecke = () => {
-                let bloecke = []; let currentWeek = null; let currentDienste = [];
-                const sorted = [...dienste].sort((a, b) => { const d1 = parseDateStr(a.datum) || new Date(0); const d2 = parseDateStr(b.datum) || new Date(0); if (d1.getTime() === d2.getTime()) return normalizeTime(a.uhrzeit).localeCompare(normalizeTime(b.uhrzeit)); return d1 - d2; });
-                for (let dienst of sorted) {
-                    const w = getWeekIdentifier(dienst.datum);
-                    if (w !== currentWeek) {
-                        if (currentWeek !== null) { let counts = {}; currentDienste.forEach(d => { if (d.gruppe) counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; }); bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : "Ohne Gruppe", dienste: currentDienste }); }
-                        currentWeek = w; currentDienste = [dienst];
-                    } else currentDienste.push(dienst);
-                }
-                if (currentWeek !== null) { let counts = {}; currentDienste.forEach(d => { if (d.gruppe) counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; }); bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : "Ohne Gruppe", dienste: currentDienste }); }
-                return bloecke;
-            };
-
-            const leseGottesdienste = async () => {
-                if (!apiKey) { setFehlerMeldung("Bitte API-Key in den Einstellungen hinterlegen."); return; }
-                if (!pdfFile) { setFehlerMeldung("Bitte PDF wählen."); return; }
-                setLaedt(true); setFehlerMeldung(null); setLadeStatusText("Lese Datei aus...");
-                try {
-                    const base64String = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(pdfFile); });
-                    setLadeStatusText("KI analysiert Pfarrbrief...");
-                    const body = {
-                        systemInstruction: { parts: [{ text: "Du bist ein präziser Parser für Pfarrbrief-Daten. Extrahiere Gottesdienste in Thalau. Erlaube Hl. Messe, Taufe, Hochzeit, Beerdigung, Osternacht, Christmette. Gib JSON Array zurück mit datum, wochentag, uhrzeit, anlass, gruppe, minis." }] },
-                        contents: [{ parts: [{ text: "Analysiere PDF." }, { inlineData: { mimeType: "application/pdf", data: base64String } }] }],
-                        generationConfig: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "OBJECT", properties: { datum: { type: "STRING" }, wochentag: { type: "STRING" }, uhrzeit: { type: "STRING" }, anlass: { type: "STRING" }, gruppe: { type: "STRING" }, minis: { type: "ARRAY", items: { type: "STRING" } } }, required: ["datum", "wochentag", "uhrzeit", "anlass", "minis"] } } }
-                    };
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-                    const json = await response.json(); if (json.error) throw new Error(json.error.message);
-                    let rawDienste = JSON.parse(json.candidates[0].content.parts[0].text.replace(/^```json/, '').replace(/^```/, '').replace(/```$/, '').trim());
-                    
-                    let wochenGruppen = {};
-                    rawDienste.forEach(d => { if (d.gruppe) wochenGruppen[getWeekIdentifier(d.datum)] = d.gruppe.replace(/Gruppe/i, '').trim(); });
-                    let alleWochen = [...new Set(rawDienste.map(d => getWeekIdentifier(d.datum)))].sort();
-                    let aktuelleGruppe = gruppen[0]?.name || "A";
-                    if (alleWochen.length > 0 && wochenGruppen[alleWochen[0]]) aktuelleGruppe = wochenGruppen[alleWochen[0]];
-                    const gruppenNamen = gruppen.map(g => g.name);
-                    alleWochen.forEach(woche => {
-                        if (wochenGruppen[woche]) aktuelleGruppe = wochenGruppen[woche];
-                        wochenGruppen[woche] = aktuelleGruppe;
-                        aktuelleGruppe = gruppenNamen[(gruppenNamen.indexOf(aktuelleGruppe) + 1) % gruppenNamen.length];
-                    });
-
-                    let bereinigteDienste = [];
-                    rawDienste.forEach(raw => {
-                        let d = { ...raw, id: crypto.randomUUID(), minis: [], uhrzeit: normalizeTime(raw.uhrzeit || "") };
-                        let currentAnlass = d.anlass || "Hl. Messe"; let isValid = false;
-                        if (["Hl. Messe", "Taufe", "Hochzeit", "Beerdigung", "Osternacht", "Christmette"].includes(currentAnlass)) isValid = true;
-                        else {
-                            let lower = currentAnlass.toLowerCase();
-                            if (lower.includes("taufe")) { currentAnlass = "Taufe"; isValid = true; } else if (lower.includes("hochzeit") || lower.includes("trauung")) { currentAnlass = "Hochzeit"; isValid = true; } else if (lower.includes("beerdigung")) { currentAnlass = "Beerdigung"; isValid = true; } else if (lower.includes("messe") || lower.includes("eucharistie") || lower.includes("hochamt")) { currentAnlass = "Hl. Messe"; isValid = true; } else if (lower.includes("osternacht")) { currentAnlass = "Osternacht"; isValid = true; } else if (lower.includes("christmette")) { currentAnlass = "Christmette"; isValid = true; } else if (lower.includes("gottesdienst")) isValid = true;
-                        }
-                        if (isValid) { d.anlass = currentAnlass; let wId = getWeekIdentifier(d.datum); if (wochenGruppen[wId]) d.gruppe = wochenGruppen[wId]; bereinigteDienste.push(d); }
-                    });
-                    setDienste(bereinigteDienste); setAppState('review');
-                } catch (e) { setFehlerMeldung("KI Fehler: " + e.message); } finally { setLaedt(false); }
-            };
-
-            const teileEin = async () => {
-                setLaedt(true); setLadeStatusText("Berechne Einteilung...");
-                setTimeout(() => {
-                    let neueDienste = [...dienste]; let planMaxDate = null;
-                    neueDienste.forEach(d => {
-                        const parsedD = parseDateStr(d.datum); if (parsedD && (!planMaxDate || parsedD > planMaxDate)) planMaxDate = parsedD;
-                        if(d.minis.length === 0 && !d.manuellerBedarf && !d.manuellerText) {
-                            let woche = d.wochentag.toLowerCase();
-                            let count = (woche.includes('sonntag') || woche.includes('feiertag')) ? anzahlSonntags : anzahlWerktags;
-                            
-                            const matchV = vormerkungen.find(v => v.datum === d.datum && (normalizeTime(v.uhrzeit) === normalizeTime(d.uhrzeit) || v.uhrzeit === "" || v.uhrzeit === "Ganztägig"));
-                            if (matchV) { 
-                                d.minis = [...matchV.minis]; d.isFromPfarrbuero = matchV.isFromPfarrbuero || false;
-                            } else {
-                                let g = gruppen.find(gr => gr.name === d.gruppe);
-                                if (g && g.mitglieder.length > 0) {
-                                    let verfuegbare = g.mitglieder.filter(m => {
-                                        const regAbw = regelmaessigeAbwesenheiten.find(ra => ra.name === m);
-                                        if (regAbw) { const days = {'sonntag':1, 'montag':2, 'dienstag':3, 'mittwoch':4, 'donnerstag':5, 'freitag':6, 'samstag':7}; if (regAbw.wochentage.includes(days[woche])) return false; }
-                                        if (parsedD) { const urlaub = abwesenheiten.find(ab => { if (ab.name !== m) return false; const s = new Date(ab.start); const e = new Date(ab.end); s.setHours(0,0,0,0); e.setHours(23,59,59,999); return parsedD >= s && parsedD <= e; }); if (urlaub) return false; }
-                                        return true;
-                                    });
-                                    d.minis = verfuegbare.sort(() => 0.5 - Math.random()).slice(0, count);
-                                } else d.minis = [];
-                            }
-                        }
-                    });
-                    setDienste(neueDienste);
-                    if (planMaxDate) { const maxIso = planMaxDate.toISOString().split('T')[0]; if (!planGeneriertBis || new Date(maxIso) > new Date(planGeneriertBis)) setPlanGeneriertBis(maxIso); }
-                    setAppState('assigned'); setLaedt(false);
-                }, 1500);
-            };
-
-            const exportierePDF = () => {
-                const { jsPDF } = window.jspdf; const doc = new jsPDF(); let y = 20; const margin = 20;
-                doc.setFontSize(22); doc.setFont("helvetica", "bold"); doc.text("Einteilung der Messdiener/innen", 105, y, { align: "center" }); y += 16;
-                const bloecke = getChronologischeBloecke();
-                let firstGroup = ""; let secondGroup = "";
-                if (bloecke.length > 0) firstGroup = bloecke[0].gruppe.replace(/Gruppe/i, '').trim();
-                if (bloecke.length > 1) secondGroup = bloecke[1].gruppe.replace(/Gruppe/i, '').trim();
-                
-                for (const block of bloecke) {
-                    if (y > 270) { doc.addPage(); y = 20; }
-                    doc.setFontSize(14); doc.setFont("helvetica", "bold"); doc.text(`Gruppe ${block.gruppe.replace(/Gruppe/i, '').trim()}`, 105, y, { align: "center" }); y += 10;
-                    for (const dienst of block.dienste) {
-                        let requiredHeight = 14 + (Math.max(dienst.minis.length, 1) * 6);
-                        if (y + requiredHeight > 277) { doc.addPage(); y = 20; }
-                        doc.setFontSize(12); doc.setFont("helvetica", "bold");
-                        let t = dienst.uhrzeit.replace(/h/i, '').trim(); if(!t.toLowerCase().endsWith("uhr")) t+=" Uhr";
-                        doc.text(`${dienst.wochentag} ${dienst.datum} ${dienst.anlass} ${t}`, margin, y); y += 8;
-                        doc.setFont("helvetica", "normal");
-                        if (dienst.manuellerText) { doc.text(dienst.manuellerText, margin, y); y += 6; }
-                        else if (dienst.manuellerBedarf) { doc.text(`Es werden ${dienst.manuellerBedarf} benötigt.`, margin, y); y += 6; }
-                        else if (dienst.minis.length === 0) { doc.text("-", margin, y); y += 6; }
-                        else { for (const mini of dienst.minis) { doc.text(mini, margin, y); y += 6; } }
-                        y += 4;
-                    }
-                }
-
-                if (y > 250) { doc.addPage(); y = 20; } y += 10;
-                doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(0, 0, 0); 
-                doc.text("Wer eingeteilt ist und nicht dienen kann, sucht sich bitte selbstständig eine Vertretung!", 105, y, { align: "center" }); y += 15;
-
-                if (notizen && notizen.length > 0) {
-                    if (y > 240) { doc.addPage(); y = 20; }
-                    doc.setFontSize(16); doc.text("News & Ankündigungen", 105, y, { align: "center" }); y += 12;
-                    notizen.forEach(note => {
-                        if (y > 260) { doc.addPage(); y = 20; }
-                        if (note.titel) { doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.text(note.titel, margin, y); y += 6; }
-                        if (note.inhalt) { doc.setFont("helvetica", "normal"); doc.setFontSize(11); const splitNews = doc.splitTextToSize(note.inhalt, 170); doc.text(splitNews, margin, y); y += (splitNews.length * 5) + 4; }
-                        y += 4; 
-                    });
-                }
-
-                const gruppenText = (firstGroup && secondGroup) ? `In den kommenden zwei Wochen sind Gruppe ${firstGroup} und ${secondGroup} dran. ` : "";
-                const formText = gruppenText + "Wenn Abwesenheiten jetzt schon bekannt sind, trage sie ganz einfach online ein, damit sie beim nächsten Plan automatisch berücksichtigt werden. Klicke dazu einfach auf den Button:";
-                doc.setFont("helvetica", "normal"); doc.setFontSize(11); const splitFormText = doc.splitTextToSize(formText, 150);
-                const boxHeight = 10 + 8 + (splitFormText.length * 5) + 4 + 10 + 10; 
-                if (y + boxHeight > 280) { doc.addPage(); y = 20; }
-                
-                doc.setFillColor(245, 245, 245); doc.roundedRect(20, y, 170, boxHeight, 5, 5, 'F');
-                let currentY = y + 14;
-                doc.setTextColor(0, 0, 0); doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.text("Abwesenheiten eintragen", 105, currentY, { align: "center" }); currentY += 8;
-                doc.setFont("helvetica", "normal"); doc.setFontSize(11);
-                splitFormText.forEach(line => { doc.text(line, 105, currentY, { align: "center" }); currentY += 5; });
-                
-                const buttonY = currentY + 3; 
-                doc.setFillColor(0, 122, 255); doc.roundedRect(105 - 23, buttonY, 46, 10, 3, 3, 'F'); 
-                doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(11);
-                doc.text("Zum Formular", 105, buttonY + 6.5, { align: "center" });
-                const urlParams = new URLSearchParams(window.location.search); const pid = urlParams.get('id') || firebaseProjectId;
-                doc.link(105 - 23, buttonY, 46, 10, { url: window.location.origin + window.location.pathname + '?id=' + pid });
-                doc.save("Messdienerplan.pdf");
-            };
 
             const value = {
                 route, setRoute, activeTab, setActiveTab, isAppLoading, laedt, setLaedt, ladeStatusText, setLadeStatusText, fehlerMeldung, setFehlerMeldung, appState, setAppState,
                 apiKey, setApiKey, adminPassword, setAdminPassword, cloudAdminPassword, setCloudAdminPassword, pfarrbueroPassword, setPfarrbueroPassword, cloudPfarrbueroPassword, setCloudPfarrbueroPassword,
                 geminiModel, setGeminiModel, firebaseProjectId, setFirebaseProjectId, planGeneriertBis, setPlanGeneriertBis,
-                anzahlSonntags, setAnzahlSonntags, anzahlWerktags, setAnzahlWerktags, gruppen, setGruppen, neueMessdiener, setNeueMessdiener, statistik, setStatistik, dienste, setDienste,
-                vormerkungen, setVormerkungen, regelmaessigeAbwesenheiten, setRegelmaessigeAbwesenheiten, abwesenheiten, setAbwesenheiten, notizen, setNotizen, events, setEvents, prozessionen, setProzessionen,
-                pdfFile, setPdfFile, alleMinis, parseDateStr, normalizeTime, getChronologischeBloecke, leseGottesdienste, teileEin, exportierePDF, syncDoc, resetApp: () => { setAppState('upload'); setDienste([]); setPdfFile(null); }
+                anzahlSonntags, setAnzahlSonntags, anzahlWerktags, setAnzahlWerktags,
+                gruppen, setGruppen, neueMessdiener, setNeueMessdiener, statistik, setStatistik, dienste, setDienste,
+                vormerkungen, setVormerkungen, regelmaessigeAbwesenheiten, setRegelmaessigeAbwesenheiten,
+                abwesenheiten, setAbwesenheiten, notizen, setNotizen, events, setEvents, prozessionen, setProzessionen,
+                pdfFile, setPdfFile, alleMinis, syncDoc, parseDateStr, normalizeTime, syncStatistikToFirebase
             };
             return <ViewModelContext.Provider value={value}>{children}</ViewModelContext.Provider>;
         }
@@ -329,7 +184,7 @@
 
             if (showAdminLogin) {
                 return (
-                    <div className="flex h-screen w-full items-center justify-center bg-[#ececec] p-4">
+                    <div className="flex min-h-screen w-full items-center justify-center bg-[#ececec] p-4">
                         <div className="bg-white p-10 rounded-3xl shadow-xl max-w-md w-full text-center relative">
                             <button onClick={() => setShowAdminLogin(false)} className="absolute top-6 left-6 text-gray-400 hover:text-gray-800"><i className="fa-solid fa-arrow-left text-xl"></i></button>
                             <i className="fa-solid fa-lock text-5xl text-gray-800 mb-6 mt-4"></i>
@@ -344,7 +199,7 @@
 
             if (showPbLogin) {
                 return (
-                    <div className="flex h-screen w-full items-center justify-center bg-[#ececec] p-4">
+                    <div className="flex min-h-screen w-full items-center justify-center bg-[#ececec] p-4">
                         <div className="bg-white p-10 rounded-3xl shadow-xl max-w-md w-full text-center relative">
                             <button onClick={() => setShowPbLogin(false)} className="absolute top-6 left-6 text-gray-400 hover:text-blue-800"><i className="fa-solid fa-arrow-left text-xl"></i></button>
                             <i className="fa-solid fa-calendar-check text-5xl text-blue-600 mb-6 mt-4"></i>
@@ -361,13 +216,19 @@
                 <div className="min-h-screen w-full flex flex-col bg-white">
                     <div className="flex-1 py-10 px-4 flex flex-col items-center justify-center">
                         <div className="max-w-lg w-full text-center flex flex-col items-center">
-                            <img src="Messdiener.png" alt="Logo" className="w-40 h-40 md:w-48 md:h-48 object-contain mb-6 drop-shadow-md rounded-3xl" onError={(e) => { e.target.style.display='none'; }} />
+                            <img src="icon.png" alt="Logo" className="w-40 h-40 md:w-48 md:h-48 object-contain mb-6 drop-shadow-md rounded-3xl" onError={(e) => { e.target.style.display='none'; }} />
                             <h1 className="text-4xl md:text-5xl font-black text-gray-900 mb-2 tracking-tight">Messdienerplan</h1>
                             <h2 className="text-2xl font-bold text-blue-600 mb-12">Thalau</h2>
                             <div className="w-full space-y-4 px-2 md:px-4">
-                                <button onClick={() => { if(vm.adminPassword && vm.adminPassword === vm.cloudAdminPassword && vm.cloudAdminPassword !== '') vm.setRoute('admin'); else setShowAdminLogin(true); }} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-lg md:text-xl py-4 rounded-2xl shadow-lg transition flex items-center justify-center"><i className="fa-solid fa-desktop mr-3"></i>Planer öffnen</button>
-                                <button onClick={() => { if(vm.cloudPfarrbueroPassword && vm.pfarrbueroPassword !== vm.cloudPfarrbueroPassword) setShowPbLogin(true); else vm.setRoute('pfarrbuero'); }} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center"><i className="fa-solid fa-calendar-check mr-3"></i>Messdiener Vormerken</button>
-                                <button onClick={() => vm.setRoute('abwesenheiten')} className="w-full bg-red-100 hover:bg-red-200 text-red-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center"><i className="fa-solid fa-user-clock mr-3"></i>Abwesenheiten eintragen</button>
+                                <button onClick={() => { if(vm.adminPassword && vm.adminPassword === vm.cloudAdminPassword && vm.cloudAdminPassword !== '') vm.setRoute('admin'); else setShowAdminLogin(true); }} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-lg md:text-xl py-4 rounded-2xl shadow-lg transition flex items-center justify-center">
+                                    <i className="fa-solid fa-desktop mr-3"></i>Planer öffnen
+                                </button>
+                                <button onClick={() => { if(vm.cloudPfarrbueroPassword && vm.pfarrbueroPassword !== vm.cloudPfarrbueroPassword) setShowPbLogin(true); else vm.setRoute('pfarrbuero'); }} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center">
+                                    <i className="fa-solid fa-calendar-check mr-3"></i>Messdiener Vormerken
+                                </button>
+                                <button onClick={() => vm.setRoute('abwesenheiten')} className="w-full bg-red-100 hover:bg-red-200 text-red-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center">
+                                    <i className="fa-solid fa-user-clock mr-3"></i>Abwesenheiten eintragen
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -392,7 +253,7 @@
             if (step === 3) {
                 return (
                     <div className="min-h-screen w-full bg-gray-50 flex flex-col items-center justify-center p-4">
-                        <div className="max-w-2xl w-full text-center bg-white rounded-2xl shadow-sm border border-gray-200 p-8 overflow-y-auto max-h-full">
+                        <div className="max-w-2xl w-full text-center bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
                             <i className="fa-solid fa-circle-check text-6xl text-green-500 mb-4"></i><h1 className="text-3xl font-bold text-gray-900 mb-2">Erfolgreich gesendet!</h1>
                             <p className="text-gray-600 mb-8">Deine Abwesenheiten wurden gespeichert.</p>
                             <button onClick={() => { setStep(2); setNeueEintraege([{ id: crypto.randomUUID(), type: 'single', start: '', end: '' }]); }} className="text-blue-600 font-bold hover:underline block w-full mb-4">Weitere eintragen</button>
@@ -403,8 +264,8 @@
             }
 
             return (
-                <div className="min-h-screen w-full flex flex-col bg-[#f0ebf8] overflow-hidden">
-                    <div className="flex-1 overflow-y-auto py-8 px-4">
+                <div className="min-h-screen w-full flex flex-col bg-[#f0ebf8]">
+                    <div className="flex-1 py-8 px-4 overflow-y-auto">
                         <div className="max-w-2xl mx-auto w-full pb-10">
                             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6">
                                 <div className="h-3 bg-red-500 w-full"></div>
@@ -465,13 +326,11 @@
         }
 
         // ==========================================
-        // 3. ADMIN VIEWS (Planer, Settings, etc)
+        // 4. ADMIN VIEWS
         // ==========================================
         function MobileTopBar({ title }) {
             const vm = useViewModel();
-            return (
-                <div className="md:hidden bg-white text-gray-900 p-4 pt-10 flex items-center shadow-sm sticky top-0 z-50 border-b border-gray-200"><button onClick={() => vm.setActiveTab('menu')} className="text-blue-600 hover:text-blue-800 p-2 pl-0"><i className="fa-solid fa-chevron-left text-xl mr-1"></i> Menü</button><h1 className="text-xl font-bold ml-2 flex-1 truncate">{title}</h1></div>
-            );
+            return <div className="md:hidden bg-white text-gray-900 p-4 pt-10 flex items-center shadow-sm sticky top-0 z-50 border-b border-gray-200"><button onClick={() => vm.setActiveTab('menu')} className="text-blue-600 hover:text-blue-800 p-2 pl-0"><i className="fa-solid fa-chevron-left text-xl mr-1"></i> Menü</button><h1 className="text-xl font-bold ml-2 flex-1 truncate">{title}</h1></div>;
         }
 
         function Sidebar() {
@@ -492,22 +351,27 @@
         function DienstEditOverlay({ dienst, onClose }) {
             const vm = useViewModel();
             const [edit, setEdit] = useState({...dienst});
-            const updateMini = (idx, val) => { let nm = [...edit.minis]; nm[idx] = val; setEdit({...edit, minis: nm}); };
-            const removeMini = (idx) => { let nm = [...edit.minis]; nm.splice(idx, 1); setEdit({...edit, minis: nm}); };
-            const handleSave = () => { let final = {...edit}; final.minis = final.minis.filter(m => m.trim() !== ""); vm.setDienste(vm.dienste.map(d => d.id === final.id ? final : d)); onClose(); };
+            const assignedGroup = vm.gruppen.find(g => g.name === edit.gruppe) || {mitglieder: []};
+            
+            const toggleMini = (m) => { if(edit.minis.includes(m)) setEdit({...edit, minis: edit.minis.filter(x => x !== m)}); else setEdit({...edit, minis: [...edit.minis, m]}); };
+            const handleSave = () => { vm.setDienste(vm.dienste.map(d => d.id === edit.id ? edit : d)); onClose(); };
 
             return (
                 <div className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white p-6 md:p-8 rounded-2xl shadow-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto">
+                    <div className="bg-white p-6 md:p-8 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
                         <h2 className="text-2xl font-bold mb-6 text-gray-900"><i className="fa-solid fa-pen-to-square text-blue-500 mr-3"></i>Gottesdienst bearbeiten</h2>
                         <div className="grid grid-cols-2 gap-4 mb-4"><div><label className="block text-sm text-gray-500 mb-1">Datum</label><input type="text" value={edit.datum} onChange={e=>setEdit({...edit, datum: e.target.value})} className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-blue-500"/></div><div><label className="block text-sm text-gray-500 mb-1">Wochentag</label><input type="text" value={edit.wochentag} onChange={e=>setEdit({...edit, wochentag: e.target.value})} className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-blue-500"/></div></div>
                         <div className="grid grid-cols-2 gap-4 mb-4"><div><label className="block text-sm text-gray-500 mb-1">Uhrzeit</label><input type="text" value={edit.uhrzeit} onChange={e=>setEdit({...edit, uhrzeit: e.target.value})} className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-blue-500"/></div><div><label className="block text-sm text-gray-500 mb-1">Anlass</label><input type="text" value={edit.anlass} onChange={e=>setEdit({...edit, anlass: e.target.value})} className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-blue-500"/></div></div>
                         <div className="grid grid-cols-2 gap-4 mb-6"><div><label className="block text-sm text-gray-500 mb-1">Bedarf (Zahl)</label><input type="number" value={edit.manuellerBedarf || ''} onChange={e=>setEdit({...edit, manuellerBedarf: e.target.value})} placeholder="Automatisch" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-blue-500"/></div><div><label className="block text-sm text-gray-500 mb-1">Hinweis Text</label><input type="text" value={edit.manuellerText || ''} onChange={e=>setEdit({...edit, manuellerText: e.target.value})} placeholder="z.B. Fällt aus" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-blue-500"/></div></div>
-                        <hr className="my-4 border-gray-200" /><h3 className="font-bold text-gray-800 mb-4">Eingeteilte Messdiener</h3>
-                        <div className="space-y-3 mb-6">
-                            {edit.minis.map((m, i) => <div key={i} className="flex space-x-2"><AutocompleteField value={m} onChange={(val) => updateMini(i, val)} suggestions={vm.alleMinis} placeholder="Name..." className="flex-1 border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-blue-500" /><button onClick={() => removeMini(i)} className="text-red-500 hover:text-red-700 px-3"><i className="fa-solid fa-trash"></i></button></div>)}
-                            {edit.minis.length < 12 && <button onClick={() => setEdit({...edit, minis: [...edit.minis, ""]})} className="text-blue-600 font-bold text-sm"><i className="fa-solid fa-plus mr-1"></i>Person hinzufügen</button>}
+                        <hr className="my-4 border-gray-200" />
+                        <h3 className="font-bold text-gray-800 mb-4">Einteilung (Gruppe {edit.gruppe})</h3>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
+                            {assignedGroup.mitglieder.map(m => {
+                                const isActive = edit.minis.includes(m);
+                                return <button key={m} onClick={() => toggleMini(m)} className={`p-3 rounded-xl font-bold text-sm border-2 transition ${isActive ? 'bg-blue-500 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200 hover:border-blue-300'}`}>{m}</button>;
+                            })}
                         </div>
+                        <div className="mb-6"><label className="block text-sm text-gray-500 mb-2">Weitere Person / Ersatz hinzufügen:</label><AutocompleteField value="" onChange={(val) => { if(val && !edit.minis.includes(val)) setEdit({...edit, minis: [...edit.minis, val]}); }} suggestions={vm.alleMinis} placeholder="Name suchen..." /></div>
                         <div className="flex justify-between items-center"><button onClick={() => { if(confirm("Diesen Gottesdienst komplett löschen?")) { vm.setDienste(vm.dienste.filter(d => d.id !== edit.id)); onClose(); } }} className="text-red-500 hover:text-red-700 font-bold"><i className="fa-solid fa-trash mr-2"></i>Löschen</button><div className="space-x-4"><button onClick={onClose} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition">Abbrechen</button><button onClick={handleSave} className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-md transition">Speichern</button></div></div>
                     </div>
                 </div>
@@ -518,342 +382,242 @@
             const vm = useViewModel();
             const [editingDienst, setEditingDienst] = useState(null);
 
+            const parseDateStr = (str) => { if (!str) return null; const parts = str.match(/\d+/g); if (!parts || parts.length < 2) return null; return new Date(parts.length >= 3 ? parseInt(parts[2]) : new Date().getFullYear(), parseInt(parts[1]) - 1, parseInt(parts[0])); };
+            const normalizeTime = (time) => { if(!time) return ""; let clean = time.replace(/h/gi, '').replace(/uhr/gi, '').trim(); let parts = clean.split(/[:.]/); if (parts.length === 2) return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.${parts[1].length === 1 ? `${parts[1]}0` : (parts[1] === "" ? "00" : parts[1])}`; else if (parts.length === 1 && parts[0] !== "") return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.00`; return time; };
+            const getWeekIdentifier = (dateStr) => { const d = parseDateStr(dateStr); if (!d) return crypto.randomUUID(); const dCopy = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); const day = dCopy.getUTCDay(); dCopy.setUTCDate(dCopy.getUTCDate() - day); return `${dCopy.getUTCFullYear()}-${String(dCopy.getUTCMonth()+1).padStart(2,'0')}-${String(dCopy.getUTCDate()).padStart(2,'0')}`; };
+
+            const getChronologischeBloecke = () => {
+                let bloecke = []; let currentWeek = null; let currentDienste = [];
+                const sorted = [...vm.dienste].sort((a, b) => { const d1 = parseDateStr(a.datum) || new Date(0); const d2 = parseDateStr(b.datum) || new Date(0); if (d1.getTime() === d2.getTime()) return normalizeTime(a.uhrzeit).localeCompare(normalizeTime(b.uhrzeit)); return d1 - d2; });
+                for (let dienst of sorted) {
+                    const w = getWeekIdentifier(dienst.datum);
+                    if (w !== currentWeek) {
+                        if (currentWeek !== null) { let counts = {}; currentDienste.forEach(d => { if (d.gruppe) counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; }); bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : "Ohne Gruppe", dienste: currentDienste }); }
+                        currentWeek = w; currentDienste = [dienst];
+                    } else currentDienste.push(dienst);
+                }
+                if (currentWeek !== null) { let counts = {}; currentDienste.forEach(d => { if (d.gruppe) counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; }); bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : "Ohne Gruppe", dienste: currentDienste }); }
+                return bloecke;
+            };
+
+            const leseGottesdienste = async () => {
+                if (!vm.apiKey) { vm.setFehlerMeldung("Bitte API-Key in den Einstellungen hinterlegen."); return; }
+                if (!vm.pdfFile) { vm.setFehlerMeldung("Bitte PDF wählen."); return; }
+                vm.setLaedt(true); vm.setFehlerMeldung(null); vm.setLadeStatusText("Lese Datei aus...");
+                try {
+                    const base64String = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(vm.pdfFile); });
+                    vm.setLadeStatusText("KI analysiert Pfarrbrief...");
+                    const body = { systemInstruction: { parts: [{ text: "Du bist ein präziser Parser für Pfarrbrief-Daten. Extrahiere Gottesdienste in Thalau. Erlaube Hl. Messe, Taufe, Hochzeit, Beerdigung, Osternacht, Christmette. Gib JSON Array zurück mit datum, wochentag, uhrzeit, anlass, gruppe, minis." }] }, contents: [{ parts: [{ text: "Analysiere PDF." }, { inlineData: { mimeType: "application/pdf", data: base64String } }] }], generationConfig: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "OBJECT", properties: { datum: { type: "STRING" }, wochentag: { type: "STRING" }, uhrzeit: { type: "STRING" }, anlass: { type: "STRING" }, gruppe: { type: "STRING" }, minis: { type: "ARRAY", items: { type: "STRING" } } }, required: ["datum", "wochentag", "uhrzeit", "anlass", "minis"] } } } };
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${vm.geminiModel}:generateContent?key=${vm.apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+                    const json = await response.json(); if (json.error) throw new Error(json.error.message);
+                    let rawDienste = JSON.parse(json.candidates[0].content.parts[0].text.replace(/^```json/, '').replace(/^```/, '').replace(/```$/, '').trim());
+                    
+                    let wochenGruppen = {}; rawDienste.forEach(d => { if (d.gruppe) wochenGruppen[getWeekIdentifier(d.datum)] = d.gruppe.replace(/Gruppe/i, '').trim(); });
+                    let alleWochen = [...new Set(rawDienste.map(d => getWeekIdentifier(d.datum)))].sort();
+                    let aktuelleGruppe = vm.gruppen[0]?.name || "A"; if (alleWochen.length > 0 && wochenGruppen[alleWochen[0]]) aktuelleGruppe = wochenGruppen[alleWochen[0]];
+                    const gruppenNamen = vm.gruppen.map(g => g.name);
+                    alleWochen.forEach(woche => { if (wochenGruppen[woche]) aktuelleGruppe = wochenGruppen[woche]; wochenGruppen[woche] = aktuelleGruppe; aktuelleGruppe = gruppenNamen[(gruppenNamen.indexOf(aktuelleGruppe) + 1) % gruppenNamen.length]; });
+
+                    let bereinigteDienste = [];
+                    rawDienste.forEach(raw => {
+                        let d = { ...raw, id: crypto.randomUUID(), minis: [], uhrzeit: normalizeTime(raw.uhrzeit || "") }; let currentAnlass = d.anlass || "Hl. Messe"; let isValid = false;
+                        if (["Hl. Messe", "Taufe", "Hochzeit", "Beerdigung", "Osternacht", "Christmette"].includes(currentAnlass)) isValid = true;
+                        else { let lower = currentAnlass.toLowerCase(); if (lower.includes("taufe")) { currentAnlass = "Taufe"; isValid = true; } else if (lower.includes("hochzeit") || lower.includes("trauung")) { currentAnlass = "Hochzeit"; isValid = true; } else if (lower.includes("beerdigung")) { currentAnlass = "Beerdigung"; isValid = true; } else if (lower.includes("messe") || lower.includes("eucharistie") || lower.includes("hochamt")) { currentAnlass = "Hl. Messe"; isValid = true; } else if (lower.includes("osternacht")) { currentAnlass = "Osternacht"; isValid = true; } else if (lower.includes("christmette")) { currentAnlass = "Christmette"; isValid = true; } else if (lower.includes("gottesdienst")) isValid = true; }
+                        if (isValid) { d.anlass = currentAnlass; let wId = getWeekIdentifier(d.datum); if (wochenGruppen[wId]) d.gruppe = wochenGruppen[wId]; bereinigteDienste.push(d); }
+                    });
+                    vm.setDienste(bereinigteDienste); vm.setAppState('review');
+                } catch (e) { vm.setFehlerMeldung("KI Fehler: " + e.message); } finally { vm.setLaedt(false); }
+            };
+
+            const teileEin = async () => {
+                vm.setLaedt(true); vm.setLadeStatusText("Berechne Einteilung...");
+                setTimeout(() => {
+                    let neueDienste = [...vm.dienste]; let planMaxDate = null;
+                    neueDienste.forEach(d => {
+                        const parsedD = parseDateStr(d.datum); if (parsedD && (!planMaxDate || parsedD > planMaxDate)) planMaxDate = parsedD;
+                        if(d.minis.length === 0 && !d.manuellerBedarf && !d.manuellerText) {
+                            let woche = d.wochentag.toLowerCase();
+                            let count = (woche.includes('sonntag') || woche.includes('feiertag')) ? vm.anzahlSonntags : vm.anzahlWerktags;
+                            
+                            const matchV = vm.vormerkungen.find(v => v.datum === d.datum && (normalizeTime(v.uhrzeit) === normalizeTime(d.uhrzeit) || v.uhrzeit === "" || v.uhrzeit === "Ganztägig"));
+                            if (matchV) { d.minis = [...matchV.minis]; d.isFromPfarrbuero = matchV.isFromPfarrbuero || false; } 
+                            else {
+                                let g = vm.gruppen.find(gr => gr.name === d.gruppe);
+                                if (g && g.mitglieder.length > 0) {
+                                    let verfuegbare = g.mitglieder.filter(m => {
+                                        const regAbw = vm.regelmaessigeAbwesenheiten.find(ra => ra.name === m);
+                                        if (regAbw) { const days = {'sonntag':0, 'montag':1, 'dienstag':2, 'mittwoch':3, 'donnerstag':4, 'freitag':5, 'samstag':6}; if (parsedD && regAbw.wochentage.includes(parsedD.getDay())) return false; }
+                                        if (parsedD) { const urlaub = vm.abwesenheiten.find(ab => { if (ab.name !== m) return false; const s = new Date(ab.start); const e = new Date(ab.end); s.setHours(0,0,0,0); e.setHours(23,59,59,999); return parsedD >= s && parsedD <= e; }); if (urlaub) return false; }
+                                        return true;
+                                    });
+                                    d.minis = verfuegbare.sort(() => 0.5 - Math.random()).slice(0, count);
+                                } else d.minis = [];
+                            }
+                        }
+                    });
+                    vm.setDienste(neueDienste);
+                    if (planMaxDate) { const maxIso = planMaxDate.toISOString().split('T')[0]; if (!vm.planGeneriertBis || new Date(maxIso) > new Date(vm.planGeneriertBis)) vm.setPlanGeneriertBis(maxIso); }
+                    vm.setAppState('assigned'); vm.setLaedt(false);
+                    // Den aktuellen Plan sofort speichern
+                    vm.syncDoc('aktuellerPlan', { planDataJson: { stringValue: JSON.stringify(neueDienste) } });
+                }, 1500);
+            };
+
+            const exportierePDF = () => {
+                const { jsPDF } = window.jspdf; const doc = new jsPDF(); let y = 20; const margin = 20;
+                doc.setFontSize(22); doc.setFont("helvetica", "bold"); doc.text("Einteilung der Messdiener/innen", 105, y, { align: "center" }); y += 16;
+                const bloecke = getChronologischeBloecke();
+                let firstGroup = ""; let secondGroup = "";
+                if (bloecke.length > 0) firstGroup = bloecke[0].gruppe.replace(/Gruppe/i, '').trim();
+                if (bloecke.length > 1) secondGroup = bloecke[1].gruppe.replace(/Gruppe/i, '').trim();
+                
+                for (const block of bloecke) {
+                    if (y > 270) { doc.addPage(); y = 20; }
+                    doc.setFontSize(14); doc.setFont("helvetica", "bold"); doc.text(`Gruppe ${block.gruppe.replace(/Gruppe/i, '').trim()}`, 105, y, { align: "center" }); y += 10;
+                    for (const dienst of block.dienste) {
+                        let requiredHeight = 14 + (Math.max(dienst.minis.length, 1) * 6);
+                        if (y + requiredHeight > 277) { doc.addPage(); y = 20; }
+                        doc.setFontSize(12); doc.setFont("helvetica", "bold"); let t = dienst.uhrzeit.replace(/h/i, '').trim(); if(!t.toLowerCase().endsWith("uhr")) t+=" Uhr";
+                        doc.text(`${dienst.wochentag} ${dienst.datum} ${dienst.anlass} ${t}`, margin, y); y += 8;
+                        doc.setFont("helvetica", "normal");
+                        if (dienst.manuellerText) { doc.text(dienst.manuellerText, margin, y); y += 6; }
+                        else if (dienst.manuellerBedarf) { doc.text(`Es werden ${dienst.manuellerBedarf} benötigt.`, margin, y); y += 6; }
+                        else if (dienst.minis.length === 0) { doc.text("-", margin, y); y += 6; }
+                        else { for (const mini of dienst.minis) { doc.text(mini, margin, y); y += 6; } }
+                        y += 4;
+                    }
+                }
+
+                if (y > 250) { doc.addPage(); y = 20; } y += 10;
+                doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(0, 0, 0); 
+                doc.text("Wer eingeteilt ist und nicht dienen kann, sucht sich bitte selbstständig eine Vertretung!", 105, y, { align: "center" }); y += 15;
+
+                if (vm.notizen && vm.notizen.length > 0) {
+                    if (y > 240) { doc.addPage(); y = 20; }
+                    doc.setFontSize(16); doc.text("News & Ankündigungen", 105, y, { align: "center" }); y += 12;
+                    vm.notizen.forEach(note => {
+                        if (y > 260) { doc.addPage(); y = 20; }
+                        if (note.titel) { doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.text(note.titel, margin, y); y += 6; }
+                        if (note.inhalt) { doc.setFont("helvetica", "normal"); doc.setFontSize(11); const splitNews = doc.splitTextToSize(note.inhalt, 170); doc.text(splitNews, margin, y); y += (splitNews.length * 5) + 4; }
+                        y += 4; 
+                    });
+                }
+
+                const gruppenText = (firstGroup && secondGroup) ? `In den kommenden zwei Wochen sind Gruppe ${firstGroup} und ${secondGroup} dran. ` : "";
+                const formText = gruppenText + "Wenn Abwesenheiten jetzt schon bekannt sind, trage sie ganz einfach online ein, damit sie beim nächsten Plan automatisch berücksichtigt werden. Klicke dazu einfach auf den Button:";
+                doc.setFont("helvetica", "normal"); doc.setFontSize(11); const splitFormText = doc.splitTextToSize(formText, 150);
+                const boxHeight = 10 + 8 + (splitFormText.length * 5) + 4 + 10 + 10; 
+                if (y + boxHeight > 280) { doc.addPage(); y = 20; }
+                
+                doc.setFillColor(245, 245, 245); doc.roundedRect(20, y, 170, boxHeight, 5, 5, 'F');
+                let currentY = y + 14;
+                doc.setTextColor(0, 0, 0); doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.text("Abwesenheiten eintragen", 105, currentY, { align: "center" }); currentY += 8;
+                doc.setFont("helvetica", "normal"); doc.setFontSize(11);
+                splitFormText.forEach(line => { doc.text(line, 105, currentY, { align: "center" }); currentY += 5; });
+                
+                const buttonY = currentY + 3; 
+                doc.setFillColor(0, 122, 255); doc.roundedRect(105 - 23, buttonY, 46, 10, 3, 3, 'F'); 
+                doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+                doc.text("Zum Formular", 105, buttonY + 6.5, { align: "center" });
+                const urlParams = new URLSearchParams(window.location.search); const pid = urlParams.get('id') || vm.firebaseProjectId;
+                doc.link(105 - 23, buttonY, 46, 10, { url: window.location.origin + window.location.pathname + '?id=' + pid });
+                doc.save("Messdienerplan.pdf");
+            };
+
+            const bloecke = getChronologischeBloecke();
+            const isMobile = window.innerWidth < 768;
+
             return (
                 <div className="flex flex-col md:flex-row h-full w-full overflow-hidden relative">
                     <MobileTopBar title="Planer" />
                     
-                    <div className="w-full md:w-[320px] lg:w-[380px] bg-white p-6 md:p-8 border-b md:border-b-0 md:border-r border-gray-200 shadow-sm z-10 shrink-0 flex flex-col h-auto md:h-full">
-                        {vm.appState === 'upload' && (
-                            <div className="flex flex-col h-full justify-center">
-                                <h2 className="text-2xl font-bold text-gray-900 mb-2">1. Pfarrbrief hochladen</h2>
-                                <p className="text-gray-500 text-sm mb-6">Wähle das PDF aus, um die Termine per KI auszulesen.</p>
-                                <label className={`w-full py-12 border-4 border-dashed rounded-3xl flex flex-col items-center justify-center cursor-pointer transition ${vm.pdfFile ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50 hover:bg-gray-100'}`}>
-                                    <i className={`fa-solid ${vm.pdfFile ? 'fa-file-circle-check text-blue-500' : 'fa-file-pdf text-gray-400'} text-5xl mb-4`}></i>
-                                    <span className={`text-sm font-bold text-center px-4 ${vm.pdfFile ? 'text-blue-600' : 'text-gray-500'}`}>{vm.pdfFile ? vm.pdfFile.name : 'PDF hierher ziehen'}</span>
-                                    <input type="file" accept="application/pdf" className="hidden" onChange={e => vm.setPdfFile(e.target.files[0])} />
-                                </label>
-                                <button onClick={vm.leseGottesdienste} disabled={vm.laedt || !vm.pdfFile} className="mt-6 w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-4 rounded-xl shadow-md transition flex justify-center items-center">
-                                    {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-2"></i> : <i className="fa-solid fa-wand-magic-sparkles mr-2"></i>}{vm.laedt ? vm.ladeStatusText : 'KI Analyse starten'}
-                                </button>
-                                {vm.fehlerMeldung && <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-lg text-xs font-bold border border-red-200"><i className="fa-solid fa-triangle-exclamation mr-2"></i>{vm.fehlerMeldung}</div>}
-                            </div>
-                        )}
-                        {vm.appState === 'review' && (
-                            <div className="flex flex-col h-full justify-center">
-                                <h2 className="text-2xl font-bold text-gray-900 mb-2">2. Abgleichen</h2>
-                                <p className="text-gray-500 text-sm mb-6">Prüfe die erkannten Termine. Klicke auf eine Kachel, um sie zu bearbeiten.</p>
-                                <button onClick={() => setEditingDienst({id: crypto.randomUUID(), datum: "", wochentag: "", uhrzeit: "", anlass: "Hl. Messe", minis: []})} className="w-full bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-bold py-3 rounded-xl transition mb-4 shadow-sm"><i className="fa-solid fa-plus mr-2"></i>Termin hinzufügen</button>
-                                <button onClick={vm.teileEin} disabled={vm.laedt} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-md transition flex justify-center items-center">
-                                    {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-2"></i> : <i className="fa-solid fa-users mr-2"></i>}{vm.laedt ? vm.ladeStatusText : 'Jetzt automatisch Einteilen'}
-                                </button>
-                                <button onClick={vm.resetApp} className="mt-4 w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold py-3 rounded-xl transition">Abbrechen & Neustart</button>
-                            </div>
-                        )}
-                        {vm.appState === 'assigned' && (
-                            <div className="flex flex-col h-full justify-center">
-                                <h2 className="text-2xl font-bold text-gray-900 mb-2">3. Fertig!</h2>
-                                <p className="text-gray-500 text-sm mb-6">Der Plan ist erstellt. Du kannst manuell korrigieren (Klick auf Kachel) oder das PDF herunterladen.</p>
-                                <button onClick={vm.exportierePDF} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-md transition mb-4"><i className="fa-solid fa-print mr-2"></i>Als PDF exportieren</button>
-                                <button onClick={vm.resetApp} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">Neuen Plan erstellen</button>
-                            </div>
-                        )}
-                    </div>
+                    {!isMobile && (
+                        <div className={`w-full ${vm.appState === 'review' ? 'lg:w-[500px] xl:w-[600px]' : 'md:w-[320px] lg:w-[380px]'} bg-white p-6 md:p-8 border-b md:border-b-0 md:border-r border-gray-200 shadow-sm z-10 shrink-0 flex flex-col h-auto md:h-full transition-all duration-300`}>
+                            {vm.appState === 'upload' && (
+                                <div className="flex flex-col h-full justify-center">
+                                    <h2 className="text-2xl font-bold text-gray-900 mb-2">1. Pfarrbrief hochladen</h2>
+                                    <p className="text-gray-500 text-sm mb-6">Wähle das PDF aus, um die Termine per KI auszulesen.</p>
+                                    <label className={`w-full py-12 border-4 border-dashed rounded-3xl flex flex-col items-center justify-center cursor-pointer transition ${vm.pdfFile ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50 hover:bg-gray-100'}`}>
+                                        <i className={`fa-solid ${vm.pdfFile ? 'fa-file-circle-check text-blue-500' : 'fa-file-pdf text-gray-400'} text-5xl mb-4`}></i>
+                                        <span className={`text-sm font-bold text-center px-4 ${vm.pdfFile ? 'text-blue-600' : 'text-gray-500'}`}>{vm.pdfFile ? vm.pdfFile.name : 'PDF hierher ziehen'}</span>
+                                        <input type="file" accept="application/pdf" className="hidden" onChange={e => vm.setPdfFile(e.target.files[0])} />
+                                    </label>
+                                    <button onClick={leseGottesdienste} disabled={vm.laedt || !vm.pdfFile} className="mt-6 w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-4 rounded-xl shadow-md transition flex justify-center items-center">
+                                        {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-2"></i> : <i className="fa-solid fa-wand-magic-sparkles mr-2"></i>}{vm.laedt ? vm.ladeStatusText : 'KI Analyse starten'}
+                                    </button>
+                                    {vm.fehlerMeldung && <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-lg text-xs font-bold border border-red-200"><i className="fa-solid fa-triangle-exclamation mr-2"></i>{vm.fehlerMeldung}</div>}
+                                </div>
+                            )}
+                            {vm.appState === 'review' && (
+                                <div className="flex flex-col h-full justify-center">
+                                    <h2 className="text-2xl font-bold text-gray-900 mb-2">2. Abgleichen</h2>
+                                    <p className="text-gray-500 text-sm mb-4">Prüfe die erkannten Termine. Klicke auf eine Kachel, um sie zu bearbeiten.</p>
+                                    {vm.pdfFile && (
+                                        <div className="w-full flex-1 min-h-[300px] mb-4 border border-gray-200 rounded-xl overflow-hidden bg-gray-100">
+                                            <iframe src={URL.createObjectURL(vm.pdfFile)} className="w-full h-full border-none" title="PDF Vorschau"></iframe>
+                                        </div>
+                                    )}
+                                    <button onClick={() => setEditingDienst({id: crypto.randomUUID(), datum: "", wochentag: "", uhrzeit: "", anlass: "Hl. Messe", minis: []})} className="w-full bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-bold py-3 rounded-xl transition mb-4 shadow-sm"><i className="fa-solid fa-plus mr-2"></i>Termin hinzufügen</button>
+                                    <button onClick={teileEin} disabled={vm.laedt} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-md transition flex justify-center items-center">
+                                        {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-2"></i> : <i className="fa-solid fa-users mr-2"></i>}{vm.laedt ? vm.ladeStatusText : 'Jetzt automatisch Einteilen'}
+                                    </button>
+                                    <button onClick={() => { vm.setAppState('upload'); vm.setDienste([]); vm.setPdfFile(null); }} className="mt-4 w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold py-3 rounded-xl transition">Abbrechen & Neustart</button>
+                                </div>
+                            )}
+                            {vm.appState === 'assigned' && (
+                                <div className="flex flex-col h-full justify-center">
+                                    <h2 className="text-2xl font-bold text-gray-900 mb-2">3. Fertig!</h2>
+                                    <p className="text-gray-500 text-sm mb-6">Der Plan ist erstellt. Du kannst manuell korrigieren (Klick auf Kachel) oder das PDF herunterladen.</p>
+                                    <button onClick={exportierePDF} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-md transition mb-4"><i className="fa-solid fa-print mr-2"></i>Als PDF exportieren</button>
+                                    <button onClick={() => { vm.setAppState('upload'); vm.setDienste([]); vm.setPdfFile(null); }} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">Neuen Plan erstellen</button>
+                                </div>
+                            )}
+                        </div>
+                    )}
                     
                     <div className="flex-1 bg-gray-50/50 p-4 md:p-10 overflow-y-auto relative md:h-full">
                         {vm.laedt && vm.appState !== 'upload' && <div className="absolute inset-0 z-50 bg-white/60 backdrop-blur-sm flex items-center justify-center"><i className="fa-solid fa-circle-notch fa-spin text-4xl text-blue-500"></i></div>}
                         
-                        {vm.appState === 'upload' && vm.pdfFile ? (
-                            <div className="w-full h-full rounded-2xl overflow-hidden border border-gray-200 shadow-sm bg-gray-100"><iframe src={URL.createObjectURL(vm.pdfFile)} className="w-full h-full border-none" title="PDF Vorschau"></iframe></div>
-                        ) : vm.appState === 'upload' && !vm.pdfFile ? (
-                            <div className="h-full flex flex-col justify-center items-center text-gray-400 py-10 md:py-20"><i className="fa-regular fa-file-pdf text-6xl mb-4 opacity-50"></i><p className="text-lg font-medium text-center">PDF Vorschau erscheint hier</p></div>
-                        ) : (
-                            <div className="max-w-6xl mx-auto pb-20">
-                                <h1 className="text-2xl md:text-4xl font-extrabold text-gray-900 mb-6 hidden md:block">Gottesdienste</h1>
-                                {vm.getChronologischeBloecke().length === 0 ? (
-                                    <div className="text-center p-10 bg-white rounded-2xl border border-dashed border-gray-300"><p className="text-gray-500 font-medium">Keine Termine gefunden.</p></div>
-                                ) : (
-                                    vm.getChronologischeBloecke().map((block, idx) => (
-                                        <div key={idx} className="mb-10">
-                                            <div className="flex items-center mb-4">
-                                                <select className="bg-transparent text-xl font-bold text-gray-900 outline-none cursor-pointer" value={block.gruppe} onChange={(e) => { const newG = e.target.value; vm.setDienste(vm.dienste.map(d => block.dienste.find(bd => bd.id === d.id) ? {...d, gruppe: newG} : d)); }}>
-                                                    <option value="Ohne Gruppe">Nicht zugeordnet</option>
-                                                    {vm.gruppen.map(g => <option key={g.name} value={g.name}>Gruppe {g.name}</option>)}
-                                                </select>
-                                            </div>
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                                                {block.dienste.map(d => (
-                                                    <div key={d.id} onClick={() => setEditingDienst(d)} className="bg-white rounded-2xl p-5 shadow-[0_4px_15px_rgba(0,0,0,0.04)] border border-gray-100 cursor-pointer hover:shadow-md hover:border-blue-200 transition relative group">
-                                                        <i className="fa-solid fa-pen absolute top-4 right-4 text-gray-300 group-hover:text-blue-500 transition opacity-0 group-hover:opacity-100"></i>
-                                                        <p className="text-blue-500 font-bold text-xs">{d.wochentag}, {d.datum}</p>
-                                                        <p className="text-2xl font-black tracking-tight mt-1 text-gray-800">{d.uhrzeit}</p>
-                                                        <p className="text-gray-500 font-medium text-sm line-clamp-2 mt-1">{d.anlass}</p>
-                                                        <hr className="my-3 border-gray-100" />
-                                                        {vm.appState === 'assigned' ? (
-                                                            <div className="space-y-1 min-h-[30px]">
-                                                                {d.manuellerText ? <p className="text-red-500 font-medium text-sm">{d.manuellerText}</p> : d.manuellerBedarf ? <p className="text-red-500 font-medium text-sm">Bedarf: {d.manuellerBedarf}</p> : d.minis.length === 0 ? <p className="text-red-500 font-bold">-</p> : d.minis.map(m => (
-                                                                    <div key={m} className="flex items-center space-x-2"><i className={`fa-solid fa-user ${d.isFromPfarrbuero ? 'text-orange-400' : 'text-gray-400'} text-[10px]`}></i><span className={`font-semibold text-sm ${d.isFromPfarrbuero ? 'text-orange-600' : 'text-gray-800'}`}>{m} {d.isFromPfarrbuero && <span className="text-[10px] ml-1 opacity-70 font-normal">(Pfarrbüro)</span>}</span></div>
-                                                                ))}
-                                                            </div>
-                                                        ) : <p className="text-gray-400 text-xs italic">Wird beim Einteilen gefüllt</p>}
-                                                    </div>
-                                                ))}
-                                            </div>
+                        <div className="max-w-6xl mx-auto pb-20">
+                            <h1 className="text-2xl md:text-4xl font-extrabold text-gray-900 mb-6 hidden md:block">Gottesdienste</h1>
+                            {bloecke.length === 0 ? (
+                                <div className="text-center p-10 bg-white rounded-2xl border border-dashed border-gray-300"><p className="text-gray-500 font-medium">Keine Termine gefunden.</p></div>
+                            ) : (
+                                bloecke.map((block, idx) => (
+                                    <div key={idx} className="mb-10">
+                                        <div className="flex items-center mb-4">
+                                            <select className="bg-transparent text-xl font-bold text-gray-900 outline-none cursor-pointer" value={block.gruppe} onChange={(e) => { const newG = e.target.value; vm.setDienste(vm.dienste.map(d => block.dienste.find(bd => bd.id === d.id) ? {...d, gruppe: newG} : d)); }}>
+                                                <option value="Ohne Gruppe">Nicht zugeordnet</option>
+                                                {vm.gruppen.map(g => <option key={g.name} value={g.name}>Gruppe {g.name}</option>)}
+                                            </select>
                                         </div>
-                                    ))
-                                )}
-                            </div>
-                        )}
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                            {block.dienste.map(d => (
+                                                <div key={d.id} onClick={() => setEditingDienst(d)} className="bg-white rounded-2xl p-5 shadow-[0_4px_15px_rgba(0,0,0,0.04)] border border-gray-100 cursor-pointer hover:shadow-md hover:border-blue-200 transition relative group">
+                                                    <i className="fa-solid fa-pen absolute top-4 right-4 text-gray-300 group-hover:text-blue-500 transition opacity-0 md:group-hover:opacity-100"></i>
+                                                    <p className="text-blue-500 font-bold text-xs">{d.wochentag}, {d.datum}</p>
+                                                    <p className="text-2xl font-black tracking-tight mt-1 text-gray-800">{d.uhrzeit}</p>
+                                                    <p className="text-gray-500 font-medium text-sm line-clamp-2 mt-1">{d.anlass}</p>
+                                                    <hr className="my-3 border-gray-100" />
+                                                    {vm.appState === 'assigned' ? (
+                                                        <div className="space-y-1 min-h-[30px]">
+                                                            {d.manuellerText ? <p className="text-red-500 font-medium text-sm">{d.manuellerText}</p> : d.manuellerBedarf ? <p className="text-red-500 font-medium text-sm">Bedarf: {d.manuellerBedarf}</p> : d.minis.length === 0 ? <p className="text-red-500 font-bold">-</p> : d.minis.map(m => (
+                                                                <div key={m} className="flex items-center space-x-2"><i className={`fa-solid fa-user ${d.isFromPfarrbuero ? 'text-orange-400' : 'text-gray-400'} text-[10px]`}></i><span className={`font-semibold text-sm ${d.isFromPfarrbuero ? 'text-orange-600' : 'text-gray-800'}`}>{m} {d.isFromPfarrbuero && <span className="text-[10px] ml-1 opacity-70 font-normal">(Pfarrbüro)</span>}</span></div>
+                                                            ))}
+                                                        </div>
+                                                    ) : <p className="text-gray-400 text-xs italic">Wird beim Einteilen gefüllt</p>}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
                     </div>
                     {editingDienst && <DienstEditOverlay dienst={editingDienst} onClose={() => setEditingDienst(null)} />}
                 </div>
             );
         }
-
-        function MessdienerView() {
-            const vm = useViewModel();
-            const [neuerNameInputs, setNeuerNameInputs] = useState({});
-            const handleAdd = (gId) => { const name = neuerNameInputs[gId] || ""; const c = name.trim(); if (c) { vm.setGruppen(p => p.map(g => (g.id === gId && !g.mitglieder.includes(c)) ? { ...g, mitglieder: [...g.mitglieder, c] } : g)); if (vm.statistik[c] === undefined) vm.setStatistik(p => ({ ...p, [c]: 0 })); } setNeuerNameInputs({ ...neuerNameInputs, [gId]: "" }); };
-            return (
-                <div className="h-full flex flex-col">
-                    <MobileTopBar title="Messdiener" />
-                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
-                        <div className="max-w-4xl mx-auto md:mx-0">
-                            <div className="hidden md:flex justify-between items-end mb-8"><div><h1 className="text-3xl font-bold text-gray-900">Gruppen ({vm.gruppen.length}/6)</h1></div><button onClick={() => { if(vm.gruppen.length < 6) vm.setGruppen([...vm.gruppen, { id: crypto.randomUUID(), name: String.fromCharCode(65 + vm.gruppen.length), mitglieder: [] }]); }} className="bg-white border border-gray-300 px-4 py-2 rounded-lg text-sm font-medium shadow-sm"><i className="fa-solid fa-plus mr-2"></i>Hinzufügen</button></div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
-                                {vm.gruppen.map(gruppe => (
-                                    <div key={gruppe.id} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                                        <div className="flex justify-between items-center mb-4"><div className="flex items-center space-x-2"><span className="font-bold text-lg text-gray-800">Gruppe</span><input type="text" value={gruppe.name} onChange={(e) => vm.setGruppen(vm.gruppen.map(g => g.id === gruppe.id ? {...g, name: e.target.value} : g))} className="font-bold text-lg w-12 border-b border-transparent focus:border-blue-500 focus:bg-gray-50 outline-none" /></div><button onClick={() => vm.setGruppen(vm.gruppen.filter(g => g.id !== gruppe.id))} className="text-red-500"><i className="fa-solid fa-trash"></i></button></div>
-                                        <div className="space-y-2 mb-4 max-h-48 overflow-y-auto pr-1">{gruppe.mitglieder.map(m => (<div key={m} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-md border border-gray-100 shadow-sm"><span className="text-sm font-medium text-gray-800">{m}</span><div className="flex items-center space-x-3"><button onClick={() => vm.setNeueMessdiener(p => p.includes(m) ? p.filter(n => n !== m) : [...p, m])} className={vm.neueMessdiener.includes(m) ? "text-yellow-500" : "text-gray-300"}><i className={`fa-star ${vm.neueMessdiener.includes(m) ? 'fa-solid' : 'fa-regular'}`}></i></button><button onClick={() => { vm.setGruppen(p => p.map(g => g.id === gruppe.id ? { ...g, mitglieder: g.mitglieder.filter(x => x !== m) } : g)); vm.setNeueMessdiener(p => p.filter(n => n !== m)); }} className="text-gray-400 hover:text-red-500"><i className="fa-solid fa-circle-xmark"></i></button></div></div>))}</div>
-                                        <div className="flex items-center space-x-2"><input type="text" placeholder="Neuer Name" value={neuerNameInputs[gruppe.id] || ""} onChange={e => setNeuerNameInputs({...neuerNameInputs, [gruppe.id]: e.target.value})} onKeyDown={e => e.key === 'Enter' && handleAdd(gruppe.id)} className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm outline-none focus:border-blue-500" /><button onClick={() => handleAdd(gruppe.id)} className="text-green-500"><i className="fa-solid fa-circle-plus text-2xl"></i></button></div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-
-        function VormerkenView() {
-            const vm = useViewModel();
-            const [editVormerk, setEditVormerk] = useState(null);
-            const wochentage = [{id: 2, n: 'Mo'}, {id: 3, n: 'Di'}, {id: 4, n: 'Mi'}, {id: 5, n: 'Do'}, {id: 6, n: 'Fr'}, {id: 7, n: 'Sa'}, {id: 1, n: 'So'}];
-            const sorted = [...vm.vormerkungen].sort((a, b) => (vm.parseDateStr(a.datum)||0) - (vm.parseDateStr(b.datum)||0));
-            return (
-                <div className="h-full flex flex-col">
-                    <MobileTopBar title="Vormerken" />
-                    <div className="flex-1 overflow-y-auto p-4 md:p-10 bg-gray-50/50">
-                        <div className="max-w-5xl mx-auto md:mx-0 pb-12">
-                            <div className="hidden md:flex justify-between items-end mb-8"><div><h1 className="text-3xl font-bold text-gray-900">Vorgemerkte Messdiener</h1></div><button className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition" onClick={() => setEditVormerk({id: crypto.randomUUID(), datum: "", wochentag: "Sonntag", uhrzeit: "", anlass: "", minis: []})}><i className="fa-solid fa-plus mr-2"></i>Vormerkung hinzufügen</button></div>
-                            <div className="md:hidden mb-6"><button onClick={() => setEditVormerk({id: crypto.randomUUID(), datum: "", wochentag: "Sonntag", uhrzeit: "", anlass: "", minis: []})} className="w-full bg-purple-600 text-white py-3 rounded-xl font-bold shadow-md"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
-                            {sorted.length === 0 ? (
-                                <div className="text-center p-8 bg-white border border-dashed border-gray-300 rounded-xl mb-8"><p className="text-gray-500">Keine speziellen Gottesdienste vorgemerkt.</p></div>
-                            ) : (
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 mb-10">
-                                    {sorted.map(v => (
-                                        <div key={v.id} onClick={() => setEditVormerk(v)} className="bg-white p-5 rounded-2xl border border-purple-200 shadow-sm relative cursor-pointer">
-                                            <button onClick={(e) => { e.stopPropagation(); vm.setVormerkungen(vm.vormerkungen.filter(x => x.id !== v.id)); }} className="absolute top-4 right-4 text-gray-300 hover:text-red-500"><i className="fa-solid fa-trash"></i></button>
-                                            <p className="text-purple-600 font-bold text-xs">{v.wochentag}, {v.datum}</p><p className="text-xl font-black text-gray-900 mt-1">{v.uhrzeit || 'Variabel'}</p><p className="text-gray-500 text-sm font-medium mb-3 truncate">{v.anlass}</p>
-                                            <div className="space-y-1">{v.minis.map(m => <div key={m} className="flex items-center space-x-2"><i className={`fa-solid fa-thumbtack ${v.isFromPfarrbuero?'text-orange-400':'text-purple-400'} text-xs`}></i><span className={`text-sm font-semibold ${v.isFromPfarrbuero?'text-orange-600':''}`}>{m} {v.isFromPfarrbuero && <span className="opacity-70 text-[10px] ml-1 font-normal">(Pfarrbüro)</span>}</span></div>)}</div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                            <div className="flex justify-between items-end mb-4 md:mb-6 mt-8"><h2 className="text-xl md:text-2xl font-bold text-gray-900">Wöchentliche Abwesenheiten</h2><button onClick={() => vm.setRegelmaessigeAbwesenheiten([...vm.regelmaessigeAbwesenheiten, { id: crypto.randomUUID(), name: '', wochentage: [] }])} className="bg-white border border-gray-300 px-3 py-1 md:px-4 md:py-2 rounded-lg text-sm font-medium"><i className="fa-solid fa-plus md:mr-2"></i><span className="hidden md:inline">Person</span></button></div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-                                {vm.regelmaessigeAbwesenheiten.map(regel => (
-                                    <div key={regel.id} className="bg-white rounded-xl border border-gray-200 p-4 md:p-6 shadow-sm">
-                                        <div className="flex justify-between items-center mb-4 md:mb-6"><AutocompleteField value={regel.name} onChange={val => vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.map(r => r.id === regel.id ? {...r, name: val} : r))} suggestions={vm.alleMinis} placeholder="Name..." className="font-bold text-lg border-b border-gray-300 focus:border-blue-500 outline-none w-2/3 bg-transparent pb-1" /><button onClick={() => vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.filter(r => r.id !== regel.id))} className="text-red-400"><i className="fa-solid fa-trash"></i></button></div>
-                                        <div className="flex justify-between">{wochentage.map(tag => { const act = regel.wochentage.includes(tag.id); return <button key={tag.id} onClick={() => { const n = act ? regel.wochentage.filter(t=>t!==tag.id) : [...regel.wochentage, tag.id]; vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.map(r => r.id === regel.id ? {...r, wochentage: n} : r)); }} className={`w-8 h-8 md:w-10 md:h-10 rounded-lg font-bold text-xs md:text-sm transition-all ${act ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-500'}`}>{tag.n}</button>; })}</div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                    {editVormerk && (
-                        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-                            <div className="bg-white p-6 md:p-8 rounded-2xl shadow-2xl max-w-xl w-full">
-                                <h2 className="text-xl md:text-2xl font-bold mb-6 text-gray-900"><i className="fa-solid fa-calendar-check text-purple-500 mr-3"></i>Vormerkung bearbeiten</h2>
-                                <div className="space-y-4 mb-8">
-                                    <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm text-gray-500 mb-1">Datum</label><input type="text" value={editVormerk.datum} onChange={e=>setEditVormerk({...editVormerk, datum: e.target.value})} placeholder="DD.MM.YYYY" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div><div><label className="block text-sm text-gray-500 mb-1">Wochentag</label><input type="text" value={editVormerk.wochentag} onChange={e=>setEditVormerk({...editVormerk, wochentag: e.target.value})} placeholder="z.B. Sonntag" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div></div>
-                                    <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm text-gray-500 mb-1">Uhrzeit</label><input type="text" value={editVormerk.uhrzeit} onChange={e=>setEditVormerk({...editVormerk, uhrzeit: e.target.value})} placeholder="Optional" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div><div><label className="block text-sm text-gray-500 mb-1">Anlass</label><input type="text" value={editVormerk.anlass} onChange={e=>setEditVormerk({...editVormerk, anlass: e.target.value})} placeholder="z.B. Firmung" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div></div>
-                                    <hr className="my-4 border-gray-200" /><h3 className="font-bold text-gray-800">Eingeteilte Personen</h3>
-                                    {editVormerk.minis.map((m, i) => (<div key={i} className="flex space-x-2"><AutocompleteField value={m} onChange={(val) => { let nm = [...editVormerk.minis]; nm[i] = val; setEditVormerk({...editVormerk, minis: nm}); }} suggestions={vm.alleMinis} placeholder="Name..." className="flex-1 border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500" /><button onClick={() => { let nm = [...editVormerk.minis]; nm.splice(i, 1); setEditVormerk({...editVormerk, minis: nm}); }} className="text-red-500 hover:text-red-700 px-3"><i className="fa-solid fa-trash"></i></button></div>))}
-                                    {editVormerk.minis.length < 8 && <button onClick={() => setEditVormerk({...editVormerk, minis: [...editVormerk.minis, ""]})} className="text-purple-600 font-bold text-sm"><i className="fa-solid fa-plus mr-1"></i>Person hinzufügen</button>}
-                                </div>
-                                <div className="flex justify-end space-x-4"><button onClick={() => setEditVormerk(null)} className="px-5 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition">Abbrechen</button><button onClick={() => { let f = {...editVormerk}; f.minis = f.minis.filter(m => m.trim() !== ""); const exists = vm.vormerkungen.find(x => x.id === f.id); if(exists) vm.setVormerkungen(vm.vormerkungen.map(x => x.id === f.id ? f : x)); else vm.setVormerkungen([...vm.vormerkungen, f]); setEditVormerk(null); }} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-md transition">Speichern</button></div>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            );
-        }
-
-        function AbwesenheitenAdminView() {
-            const vm = useViewModel();
-            const sorted = [...vm.abwesenheiten].sort((a,b) => new Date(a.start) - new Date(b.start));
-            const fmt = (iso) => { if(!iso)return""; const p=iso.split('-'); return p.length===3?`${p[2]}.${p[1]}.${p[0]}`:iso; };
-            
-            return (
-                <div className="h-full flex flex-col">
-                    <MobileTopBar title="Abwesenheiten" />
-                    <div className="flex-1 overflow-y-auto p-4 md:p-10 bg-gray-50/50">
-                        <div className="max-w-5xl mx-auto md:mx-0 pb-12">
-                            <div className="hidden md:flex justify-between items-end mb-8">
-                                <div><h1 className="text-3xl font-bold text-gray-900">Eingetragene Abwesenheiten</h1><p className="text-gray-500 mt-1">Hier siehst du alle Urlaube, die über das Online-Formular eingereicht wurden.</p></div>
-                                <button onClick={() => { if(confirm("Alle abgelaufenen Einträge löschen?")) { const today = new Date(); today.setHours(0,0,0,0); vm.setAbwesenheiten(vm.abwesenheiten.filter(a => new Date(a.end || a.start) >= today)); } }} className="bg-white border border-gray-300 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition hover:bg-gray-50"><i className="fa-solid fa-broom mr-2"></i>Alte löschen</button>
-                            </div>
-                            {sorted.length === 0 ? (
-                                <div className="text-center p-8 bg-white border border-dashed border-gray-300 rounded-xl mb-8"><p className="text-gray-500">Keine Abwesenheiten eingetragen.</p></div>
-                            ) : (
-                                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                                    <div className="divide-y divide-gray-100">
-                                        {sorted.map(abw => (
-                                            <div key={abw.id} className="p-4 md:p-6 flex justify-between items-center hover:bg-gray-50">
-                                                <div>
-                                                    <div className="font-bold text-gray-800 text-lg">{abw.name}</div>
-                                                    <div className="text-sm text-gray-500 mt-1"><i className="fa-regular fa-calendar mr-2"></i>{abw.type === 'single' ? fmt(abw.start) : `${fmt(abw.start)} - ${fmt(abw.end)}`}</div>
-                                                </div>
-                                                <button onClick={() => { if(confirm("Eintrag löschen?")) vm.setAbwesenheiten(vm.abwesenheiten.filter(x => x.id !== abw.id)); }} className="text-red-400 hover:text-red-600 p-2"><i className="fa-solid fa-trash text-lg"></i></button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-
-        function StatistikView() {
-            const vm = useViewModel();
-            const orderedNames = Object.keys(vm.statistik).sort((a, b) => vm.statistik[b] - vm.statistik[a]);
-            return (
-                <div className="h-full flex flex-col">
-                    <MobileTopBar title="Statistik" />
-                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
-                        <div className="max-w-4xl mx-auto md:mx-0">
-                            <div className="hidden md:flex justify-between items-end mb-8"><div><h1 className="text-3xl font-bold text-gray-900">Einsatz-Statistik</h1></div><button className="bg-white border border-gray-300 hover:bg-red-50 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition" onClick={() => { if(confirm("Alle Zähler nullen?")) { let neu = {}; vm.gruppen.forEach(g => g.mitglieder.forEach(m => neu[m] = 0)); vm.setStatistik(neu); vm.syncStatistikToFirebase(); } }}><i className="fa-solid fa-arrow-rotate-left mr-2"></i>Nullen</button></div>
-                            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-10">
-                                <div className="divide-y divide-gray-100">
-                                    {orderedNames.map((name, idx) => (
-                                        <div key={name} className={`flex justify-between items-center px-4 md:px-10 py-3 md:py-4 ${idx % 2 === 0 ? 'bg-blue-50/20' : 'bg-white'}`}>
-                                            <span className="font-semibold text-gray-800 md:text-lg">{name}</span>
-                                            <div className="flex items-center space-x-4 md:space-x-6">
-                                                <span className="text-xl md:text-2xl font-bold text-gray-900 w-6 md:w-8 text-right font-mono">{vm.statistik[name]}</span>
-                                                <div className="flex space-x-2">
-                                                    <button onClick={() => { vm.setStatistik({...vm.statistik, [name]: Math.max(0, vm.statistik[name] - 1)}); vm.syncStatistikToFirebase(); }} className="text-red-500 text-xl md:text-2xl"><i className="fa-solid fa-circle-minus"></i></button>
-                                                    <button onClick={() => { vm.setStatistik({...vm.statistik, [name]: vm.statistik[name] + 1}); vm.syncStatistikToFirebase(); }} className="text-green-500 text-xl md:text-2xl"><i className="fa-solid fa-circle-plus"></i></button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-
-        function NotizenView() {
-            const vm = useViewModel();
-            const addNote = () => vm.setNotizen([{ id: crypto.randomUUID(), titel: "Neue Notiz", inhalt: "" }, ...vm.notizen]);
-            return (
-                <div className="h-full flex flex-col">
-                    <MobileTopBar title="Notizen" />
-                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
-                        <div className="max-w-6xl mx-auto md:mx-0">
-                            <div className="hidden md:flex justify-between items-end mb-8"><div><h1 className="text-3xl font-bold text-gray-900">Notizen</h1></div><button onClick={addNote} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition"><i className="fa-solid fa-plus mr-2"></i>Notiz hinzufügen</button></div>
-                            <div className="md:hidden mb-6"><button onClick={addNote} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6 pb-10">
-                                {vm.notizen.map(note => (
-                                    <div key={note.id} className="bg-yellow-100/80 rounded-2xl border border-yellow-300 p-5 shadow-sm">
-                                        <div className="flex justify-between items-center mb-3">
-                                            <input type="text" value={note.titel} onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, titel: e.target.value} : n))} className="font-bold text-lg bg-transparent border-none w-full text-gray-800 outline-none" placeholder="Titel..." />
-                                            <button onClick={() => vm.setNotizen(vm.notizen.filter(n => n.id !== note.id))} className="text-red-500/70 hover:text-red-600 ml-2"><i className="fa-solid fa-trash"></i></button>
-                                        </div>
-                                        <textarea value={note.inhalt} onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, inhalt: e.target.value} : n))} placeholder="Hier Notizen eintragen..." className="w-full h-32 md:h-48 bg-transparent border-none resize-none outline-none text-gray-700 text-sm md:text-base"></textarea>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-
-        function WerkzeugeView() {
-            const vm = useViewModel();
-            const [kopiert, setKopiert] = useState(false);
-            const [kiLoading, setKiLoading] = useState(false);
-
-            const handleCopy = () => { const alle = vm.gruppen.flatMap(g => g.mitglieder).sort().join("\n"); navigator.clipboard.writeText(alle); setKopiert(true); setTimeout(() => setKopiert(false), 2000); };
-            const handleKiImport = async () => {
-                if(!vm.apiKey) { alert("Bitte erst den Gemini API Key hinterlegen!"); return; }
-                try {
-                    const text = await navigator.clipboard.readText(); if(!text) { alert("Zwischenablage ist leer!"); return; }
-                    if(confirm("Deine aktuellen Gruppen werden durch die Daten aus der Zwischenablage überschrieben. Fortfahren?")) {
-                        setKiLoading(true);
-                        const body = { contents: [{ parts: [{ text: `Extrahiere Namen und weise sie Gruppen zu. TEXT: ${text}` }] }], generationConfig: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "OBJECT", properties: { name: { type: "STRING" }, mitglieder: { type: "ARRAY", items: { type: "STRING" } } }, required: ["name", "mitglieder"] } } } };
-                        const response = await fetch(`[https://generativelanguage.googleapis.com/v1beta/models/$](https://generativelanguage.googleapis.com/v1beta/models/$){vm.geminiModel}:generateContent?key=${vm.apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-                        const json = await response.json();
-                        let cleanJsonString = json.candidates[0].content.parts[0].text.replace(/^```json/, '').replace(/^```/, '').replace(/```$/, '').trim();
-                        const importierteGruppen = JSON.parse(cleanJsonString);
-                        const neueGruppen = importierteGruppen.map(g => ({ id: crypto.randomUUID(), name: g.name, mitglieder: g.mitglieder }));
-                        vm.setGruppen(neueGruppen);
-                        let newStat = {...vm.statistik}; neueGruppen.forEach(g => g.mitglieder.forEach(m => { if(newStat[m] === undefined) newStat[m] = 0; })); vm.setStatistik(newStat);
-                        alert("Gruppen erfolgreich importiert!");
-                    }
-                } catch(e) { alert("Fehler: " + e.message); } finally { setKiLoading(false); }
-            };
-
-            const exportiereGruppenPDF = () => {
-                const { jsPDF } = window.jspdf; const doc = new jsPDF({ unit: 'mm', format: 'a4' }); let currentY_mm = 20;
-                doc.setFontSize(20); doc.setFont("helvetica", "bold"); doc.text("Übersicht: Alle Messdiener-Gruppen", 105, currentY_mm, { align: "center" }); currentY_mm += 15;
-                for (const gruppe of vm.gruppen) {
-                    if (currentY_mm + 15 > 280) { doc.addPage(); currentY_mm = 20; }
-                    doc.setFontSize(16); doc.setFont("helvetica", "bold"); doc.text(`Gruppe ${gruppe.name}`, 20, currentY_mm); currentY_mm += 8;
-                    doc.setFontSize(12); doc.setFont("helvetica", "normal");
-                    for (const mini of gruppe.mitglieder) {
-                        if (currentY_mm + 6 > 280) { doc.addPage(); currentY_mm = 20; }
-                        const prefix = vm.neueMessdiener.includes(mini) ? "* " : "• "; doc.text(`${prefix}${mini}`, 25, currentY_mm); currentY_mm += 6;
-                    }
-                    currentY_mm += 8;
-                }
-                doc.save("Gruppenliste.pdf");
-            };
-
-            const ToolBox = ({ icon, title, desc, btnText, onClick, colorClass, btnClass, loading }) => (
-                <div className="bg-white rounded-xl border border-gray-200 p-5 md:p-6 shadow-sm mb-4 md:mb-6"><div className="flex items-center space-x-3 mb-2"><i className={`${icon} ${colorClass} text-2xl w-8 text-center`}></i><h2 className="text-lg md:text-xl font-bold text-gray-800">{title}</h2></div><p className="text-sm md:text-base text-gray-500 mb-5 ml-11">{desc}</p><div className="ml-11"><button onClick={onClick} disabled={loading} className={`${btnClass} px-4 py-2 rounded-lg text-sm font-bold shadow-sm w-full md:w-auto disabled:opacity-50`}>{loading ? 'Verarbeite...' : btnText}</button></div></div>
-            );
-
-            return (
-                <div className="h-full flex flex-col">
-                    <MobileTopBar title="Werkzeuge" />
-                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
-                        <div className="max-w-3xl mx-auto md:mx-0">
-                            <div className="hidden md:block mb-8"><h1 className="text-3xl font-bold text-gray-900">Werkzeuge</h1></div>
-                            <ToolBox icon="fa-solid fa-copy" colorClass="text-blue-500" title="Namen kopieren" desc="Kopiert alle Messdiener in die Zwischenablage." btnText={kopiert ? "Kopiert!" : "Kopieren"} onClick={handleCopy} btnClass="bg-blue-600 text-white" />
-                            <ToolBox icon="fa-solid fa-file-pdf" colorClass="text-orange-500" title="Gruppen-Liste (PDF)" desc="Erstellt ein druckfertiges PDF." btnText="Herunterladen" onClick={exportiereGruppenPDF} btnClass="bg-orange-500 text-white" />
-                            <ToolBox icon="fa-solid fa-wand-magic-sparkles" colorClass="text-purple-500" title="KI Import" desc="Kopiere einen Text mit Gruppen und Namen. Die KI überschreibt deine aktuellen Gruppen." btnText="Aus Zwischenablage importieren" onClick={handleKiImport} loading={kiLoading} btnClass="bg-purple-600 text-white" />
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-
-        function DropSlot({ title, value, onDrop, onRemove }) {
-            return (
-                <div onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); onDrop(e.dataTransfer.getData("text")); }} className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-2 md:p-3 text-center min-h-[60px] flex flex-col items-center justify-center relative">
-                    <span className="text-[10px] md:text-xs text-gray-500 font-bold uppercase mb-1">{title}</span>
-                    {value ? (<div draggable onDragStart={e => e.dataTransfer.setData("text", value)} className="bg-blue-100 text-blue-800 px-2 py-1 md:px-3 md:py-1 rounded-md text-sm md:text-base font-bold cursor-grab flex items-center gap-2"><span>{value}</span><i className="fa-solid fa-xmark cursor-pointer text-blue-400 hover:text-blue-600" onClick={(e) => { e.stopPropagation(); onRemove(); }}></i></div>) : <span className="font-bold text-gray-300">-</span>}
-                </div>
-            );
-        }
-
-        function DraggableMini({ name }) { return <div draggable onDragStart={(e) => e.dataTransfer.setData("text", name)} className="bg-white border border-gray-200 shadow-sm rounded-md px-3 py-2 text-sm font-semibold cursor-grab active:cursor-grabbing hover:border-blue-400 transition">{name}</div>; }
 
         function ProzessionenView() {
             const vm = useViewModel();
@@ -924,6 +688,189 @@
                 </div>
             );
         }
+// --- DIE 6 FEHLENDEN ADMIN VIEWS ---
+
+        function MessdienerView() {
+            const vm = useViewModel();
+            const [neuerNameInputs, setNeuerNameInputs] = useState({});
+            const handleAdd = (gId) => { const name = neuerNameInputs[gId] || ""; const c = name.trim(); if (c) { vm.setGruppen(p => p.map(g => (g.id === gId && !g.mitglieder.includes(c)) ? { ...g, mitglieder: [...g.mitglieder, c] } : g)); if (vm.statistik[c] === undefined) vm.setStatistik(p => ({ ...p, [c]: 0 })); } setNeuerNameInputs({ ...neuerNameInputs, [gId]: "" }); };
+            return (
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Messdiener" />
+                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
+                        <div className="max-w-4xl mx-auto md:mx-0">
+                            <div className="hidden md:flex justify-between items-end mb-8">
+                                <div><h1 className="text-3xl font-bold text-gray-900">Gruppen ({vm.gruppen.length}/6)</h1></div>
+                                <button onClick={() => { if(vm.gruppen.length < 6) vm.setGruppen([...vm.gruppen, { id: crypto.randomUUID(), name: String.fromCharCode(65 + vm.gruppen.length), mitglieder: [] }]); }} className="bg-white border border-gray-300 px-4 py-2 rounded-lg text-sm font-medium shadow-sm"><i className="fa-solid fa-plus mr-2"></i>Hinzufügen</button>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+                                {vm.gruppen.map(gruppe => (
+                                    <div key={gruppe.id} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <div className="flex items-center space-x-2"><span className="font-bold text-lg text-gray-800">Gruppe</span><input type="text" value={gruppe.name} onChange={(e) => vm.setGruppen(vm.gruppen.map(g => g.id === gruppe.id ? {...g, name: e.target.value} : g))} className="font-bold text-lg w-12 border-b border-transparent focus:border-blue-500 focus:bg-gray-50 outline-none" /></div>
+                                            <button onClick={() => vm.setGruppen(vm.gruppen.filter(g => g.id !== gruppe.id))} className="text-red-500"><i className="fa-solid fa-trash"></i></button>
+                                        </div>
+                                        <div className="space-y-2 mb-4 max-h-48 overflow-y-auto pr-1">
+                                            {gruppe.mitglieder.map(m => (
+                                                <div key={m} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-md border border-gray-100 shadow-sm"><span className="text-sm font-medium text-gray-800">{m}</span><div className="flex items-center space-x-3"><button onClick={() => vm.setNeueMessdiener(p => p.includes(m) ? p.filter(n => n !== m) : [...p, m])} className={vm.neueMessdiener.includes(m) ? "text-yellow-500" : "text-gray-300"}><i className={`fa-star ${vm.neueMessdiener.includes(m) ? 'fa-solid' : 'fa-regular'}`}></i></button><button onClick={() => { vm.setGruppen(p => p.map(g => g.id === gruppe.id ? { ...g, mitglieder: g.mitglieder.filter(x => x !== m) } : g)); vm.setNeueMessdiener(p => p.filter(n => n !== m)); }} className="text-gray-400 hover:text-red-500"><i className="fa-solid fa-circle-xmark"></i></button></div></div>
+                                            ))}
+                                        </div>
+                                        <div className="flex items-center space-x-2">
+                                            <input type="text" placeholder="Neuer Name" value={neuerNameInputs[gruppe.id] || ""} onChange={e => setNeuerNameInputs({...neuerNameInputs, [gruppe.id]: e.target.value})} onKeyDown={e => e.key === 'Enter' && handleAdd(gruppe.id)} className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm outline-none focus:border-blue-500" />
+                                            <button onClick={() => handleAdd(gruppe.id)} className="text-green-500"><i className="fa-solid fa-circle-plus text-2xl"></i></button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function VormerkenView() {
+            const vm = useViewModel();
+            const [editVormerk, setEditVormerk] = useState(null);
+            const wochentage = [{id: 2, n: 'Mo'}, {id: 3, n: 'Di'}, {id: 4, n: 'Mi'}, {id: 5, n: 'Do'}, {id: 6, n: 'Fr'}, {id: 7, n: 'Sa'}, {id: 1, n: 'So'}];
+            const sorted = [...vm.vormerkungen].sort((a, b) => (vm.parseDateStr(a.datum)||0) - (vm.parseDateStr(b.datum)||0));
+            return (
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Vormerken" />
+                    <div className="flex-1 overflow-y-auto p-4 md:p-10 bg-gray-50/50">
+                        <div className="max-w-5xl mx-auto md:mx-0 pb-12">
+                            <div className="hidden md:flex justify-between items-end mb-8">
+                                <div><h1 className="text-3xl font-bold text-gray-900">Vorgemerkte Messdiener</h1></div>
+                                <button className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition" onClick={() => setEditVormerk({id: crypto.randomUUID(), datum: "", wochentag: "Sonntag", uhrzeit: "", anlass: "", minis: []})}><i className="fa-solid fa-plus mr-2"></i>Vormerkung hinzufügen</button>
+                            </div>
+                            <div className="md:hidden mb-6"><button onClick={() => setEditVormerk({id: crypto.randomUUID(), datum: "", wochentag: "Sonntag", uhrzeit: "", anlass: "", minis: []})} className="w-full bg-purple-600 text-white py-3 rounded-xl font-bold shadow-md"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
+                            {sorted.length === 0 ? (
+                                <div className="text-center p-8 bg-white border border-dashed border-gray-300 rounded-xl mb-8"><p className="text-gray-500">Keine speziellen Gottesdienste vorgemerkt.</p></div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 mb-10">
+                                    {sorted.map(v => (
+                                        <div key={v.id} onClick={() => setEditVormerk(v)} className="bg-white p-5 rounded-2xl border border-purple-200 shadow-sm relative cursor-pointer">
+                                            <button onClick={(e) => { e.stopPropagation(); vm.setVormerkungen(vm.vormerkungen.filter(x => x.id !== v.id)); }} className="absolute top-4 right-4 text-gray-300 hover:text-red-500"><i className="fa-solid fa-trash"></i></button>
+                                            <p className="text-purple-600 font-bold text-xs">{v.wochentag}, {v.datum}</p>
+                                            <p className="text-xl font-black text-gray-900 mt-1">{v.uhrzeit || 'Variabel'}</p>
+                                            <p className="text-gray-500 text-sm font-medium mb-3 truncate">{v.anlass}</p>
+                                            <div className="space-y-1">{v.minis.map(m => <div key={m} className="flex items-center space-x-2"><i className={`fa-solid fa-thumbtack ${v.isFromPfarrbuero?'text-orange-400':'text-purple-400'} text-xs`}></i><span className={`text-sm font-semibold ${v.isFromPfarrbuero?'text-orange-600':''}`}>{m} {v.isFromPfarrbuero && <span className="opacity-70 text-[10px] ml-1 font-normal">(Pfarrbüro)</span>}</span></div>)}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            <div className="flex justify-between items-end mb-4 md:mb-6 mt-8"><h2 className="text-xl md:text-2xl font-bold text-gray-900">Wöchentliche Abwesenheiten</h2><button onClick={() => vm.setRegelmaessigeAbwesenheiten([...vm.regelmaessigeAbwesenheiten, { id: crypto.randomUUID(), name: '', wochentage: [] }])} className="bg-white border border-gray-300 px-3 py-1 md:px-4 md:py-2 rounded-lg text-sm font-medium"><i className="fa-solid fa-plus md:mr-2"></i><span className="hidden md:inline">Person</span></button></div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                                {vm.regelmaessigeAbwesenheiten.map(regel => (
+                                    <div key={regel.id} className="bg-white rounded-xl border border-gray-200 p-4 md:p-6 shadow-sm">
+                                        <div className="flex justify-between items-center mb-4 md:mb-6"><AutocompleteField value={regel.name} onChange={val => vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.map(r => r.id === regel.id ? {...r, name: val} : r))} suggestions={vm.alleMinis} placeholder="Name..." className="font-bold text-lg border-b border-gray-300 focus:border-blue-500 outline-none w-2/3 bg-transparent pb-1" /><button onClick={() => vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.filter(r => r.id !== regel.id))} className="text-red-400"><i className="fa-solid fa-trash"></i></button></div>
+                                        <div className="flex justify-between">
+                                            {wochentage.map(tag => {
+                                                const act = regel.wochentage.includes(tag.id);
+                                                return <button key={tag.id} onClick={() => { const n = act ? regel.wochentage.filter(t=>t!==tag.id) : [...regel.wochentage, tag.id]; vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.map(r => r.id === regel.id ? {...r, wochentage: n} : r)); }} className={`w-8 h-8 md:w-10 md:h-10 rounded-lg font-bold text-xs md:text-sm transition-all ${act ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-500'}`}>{tag.n}</button>;
+                                            })}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                    {editVormerk && (
+                        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+                            <div className="bg-white p-6 md:p-8 rounded-2xl shadow-2xl max-w-xl w-full">
+                                <h2 className="text-xl md:text-2xl font-bold mb-6 text-gray-900"><i className="fa-solid fa-calendar-check text-purple-500 mr-3"></i>Vormerkung bearbeiten</h2>
+                                <div className="space-y-4 mb-8">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div><label className="block text-sm text-gray-500 mb-1">Datum</label><input type="text" value={editVormerk.datum} onChange={e=>setEditVormerk({...editVormerk, datum: e.target.value})} placeholder="DD.MM.YYYY" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div>
+                                        <div><label className="block text-sm text-gray-500 mb-1">Wochentag</label><input type="text" value={editVormerk.wochentag} onChange={e=>setEditVormerk({...editVormerk, wochentag: e.target.value})} placeholder="z.B. Sonntag" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div><label className="block text-sm text-gray-500 mb-1">Uhrzeit</label><input type="text" value={editVormerk.uhrzeit} onChange={e=>setEditVormerk({...editVormerk, uhrzeit: e.target.value})} placeholder="Optional" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div>
+                                        <div><label className="block text-sm text-gray-500 mb-1">Anlass</label><input type="text" value={editVormerk.anlass} onChange={e=>setEditVormerk({...editVormerk, anlass: e.target.value})} placeholder="z.B. Firmung" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div>
+                                    </div>
+                                    <hr className="my-4 border-gray-200" />
+                                    <h3 className="font-bold text-gray-800">Eingeteilte Personen</h3>
+                                    {editVormerk.minis.map((m, i) => (
+                                        <div key={i} className="flex space-x-2">
+                                            <AutocompleteField value={m} onChange={(val) => { let nm = [...editVormerk.minis]; nm[i] = val; setEditVormerk({...editVormerk, minis: nm}); }} suggestions={vm.alleMinis} placeholder="Name..." className="flex-1 border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500" />
+                                            <button onClick={() => { let nm = [...editVormerk.minis]; nm.splice(i, 1); setEditVormerk({...editVormerk, minis: nm}); }} className="text-red-500 hover:text-red-700 px-3"><i className="fa-solid fa-trash"></i></button>
+                                        </div>
+                                    ))}
+                                    {editVormerk.minis.length < 8 && <button onClick={() => setEditVormerk({...editVormerk, minis: [...editVormerk.minis, ""]})} className="text-purple-600 font-bold text-sm"><i className="fa-solid fa-plus mr-1"></i>Person hinzufügen</button>}
+                                </div>
+                                <div className="flex justify-end space-x-4">
+                                    <button onClick={() => setEditVormerk(null)} className="px-5 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition">Abbrechen</button>
+                                    <button onClick={() => { let f = {...editVormerk}; f.minis = f.minis.filter(m => m.trim() !== ""); const exists = vm.vormerkungen.find(x => x.id === f.id); if(exists) vm.setVormerkungen(vm.vormerkungen.map(x => x.id === f.id ? f : x)); else vm.setVormerkungen([...vm.vormerkungen, f]); setEditVormerk(null); }} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-md transition">Speichern</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        function StatistikView() {
+            const vm = useViewModel();
+            const orderedNames = Object.keys(vm.statistik).sort((a, b) => vm.statistik[b] - vm.statistik[a]);
+            return (
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Statistik" />
+                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
+                        <div className="max-w-4xl mx-auto md:mx-0">
+                            <div className="hidden md:flex justify-between items-end mb-8">
+                                <div><h1 className="text-3xl font-bold text-gray-900">Einsatz-Statistik</h1></div>
+                                <button className="bg-white border border-gray-300 hover:bg-red-50 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition" onClick={() => { if(confirm("Alle Zähler nullen?")) { let neu = {}; vm.gruppen.forEach(g => g.mitglieder.forEach(m => neu[m] = 0)); vm.setStatistik(neu); vm.syncStatistikToFirebase(); } }}><i className="fa-solid fa-arrow-rotate-left mr-2"></i>Nullen</button>
+                            </div>
+                            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-10">
+                                <div className="divide-y divide-gray-100">
+                                    {orderedNames.map((name, idx) => (
+                                        <div key={name} className={`flex justify-between items-center px-4 md:px-10 py-3 md:py-4 ${idx % 2 === 0 ? 'bg-blue-50/20' : 'bg-white'}`}>
+                                            <span className="font-semibold text-gray-800 md:text-lg">{name}</span>
+                                            <div className="flex items-center space-x-4 md:space-x-6">
+                                                <span className="text-xl md:text-2xl font-bold text-gray-900 w-6 md:w-8 text-right font-mono">{vm.statistik[name]}</span>
+                                                <div className="flex space-x-2">
+                                                    <button onClick={() => { vm.setStatistik({...vm.statistik, [name]: Math.max(0, vm.statistik[name] - 1)}); vm.syncStatistikToFirebase(); }} className="text-red-500 text-xl md:text-2xl"><i className="fa-solid fa-circle-minus"></i></button>
+                                                    <button onClick={() => { vm.setStatistik({...vm.statistik, [name]: vm.statistik[name] + 1}); vm.syncStatistikToFirebase(); }} className="text-green-500 text-xl md:text-2xl"><i className="fa-solid fa-circle-plus"></i></button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function NotizenView() {
+            const vm = useViewModel();
+            const addNote = () => vm.setNotizen([{ id: crypto.randomUUID(), titel: "Neue Notiz", inhalt: "" }, ...vm.notizen]);
+            return (
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Notizen" />
+                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
+                        <div className="max-w-6xl mx-auto md:mx-0">
+                            <div className="hidden md:flex justify-between items-end mb-8">
+                                <div><h1 className="text-3xl font-bold text-gray-900">Notizen</h1></div>
+                                <button onClick={addNote} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition"><i className="fa-solid fa-plus mr-2"></i>Notiz hinzufügen</button>
+                            </div>
+                            <div className="md:hidden mb-6"><button onClick={addNote} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6 pb-10">
+                                {vm.notizen.map(note => (
+                                    <div key={note.id} className="bg-yellow-100/80 rounded-2xl border border-yellow-300 p-5 shadow-sm">
+                                        <div className="flex justify-between items-center mb-3">
+                                            <input type="text" value={note.titel} onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, titel: e.target.value} : n))} className="font-bold text-lg bg-transparent border-none w-full text-gray-800 outline-none" placeholder="Titel..." />
+                                            <button onClick={() => vm.setNotizen(vm.notizen.filter(n => n.id !== note.id))} className="text-red-500/70 hover:text-red-600 ml-2"><i className="fa-solid fa-trash"></i></button>
+                                        </div>
+                                        <textarea value={note.inhalt} onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, inhalt: e.target.value} : n))} placeholder="Hier Notizen eintragen..." className="w-full h-32 md:h-48 bg-transparent border-none resize-none outline-none text-gray-700 text-sm md:text-base"></textarea>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
 
         function EventsView() {
             const vm = useViewModel();
@@ -934,7 +881,9 @@
                     <MobileTopBar title="Events" />
                     <div className="hidden md:flex w-[300px] bg-white border-r border-gray-200 flex-col h-full z-10 shrink-0">
                         <div className="p-6"><h2 className="text-2xl font-bold text-gray-900 mb-4">Events</h2><button onClick={() => { const nId = crypto.randomUUID(); vm.setEvents([{id: nId, titel: "Neues Event", datum: "", beschreibung: ""}, ...vm.events]); setSelectedId(nId); }} className="w-full bg-gray-100 font-medium py-2 rounded-lg border border-gray-300"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
-                        <div className="flex-1 overflow-y-auto px-3 space-y-1">{sorted.map(e => <button key={e.id} onClick={() => setSelectedId(e.id)} className={`w-full text-left px-4 py-3 rounded-lg ${selectedId === e.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}><div className="font-bold truncate">{e.titel}</div><div className="text-sm opacity-80">{e.datum}</div></button>)}</div>
+                        <div className="flex-1 overflow-y-auto px-3 space-y-1">
+                            {sorted.map(e => <button key={e.id} onClick={() => setSelectedId(e.id)} className={`w-full text-left px-4 py-3 rounded-lg ${selectedId === e.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}><div className="font-bold truncate">{e.titel}</div><div className="text-sm opacity-80">{e.datum}</div></button>)}
+                        </div>
                     </div>
                     <div className="flex-1 bg-gray-50/50 p-4 md:p-10 overflow-y-auto">
                         {!selectedId ? (
@@ -942,7 +891,13 @@
                         ) : (
                             vm.events.filter(e => e.id === selectedId).map(ev => (
                                 <div key={ev.id} className="max-w-4xl bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm">
-                                    <div className="flex justify-between items-start mb-6"><div className="w-full"><input type="text" value={ev.titel} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, titel: e.target.value} : x))} className="text-2xl md:text-4xl font-black text-gray-900 w-full bg-transparent outline-none mb-2" placeholder="Titel..." /><input type="text" value={ev.datum} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, datum: e.target.value} : x))} className="text-lg md:text-xl font-bold text-blue-600 w-full bg-transparent outline-none" placeholder="Datum..." /></div><button onClick={() => { vm.setEvents(vm.events.filter(x => x.id !== ev.id)); setSelectedId(null); }} className="text-red-500 p-2"><i className="fa-solid fa-trash text-xl"></i></button></div>
+                                    <div className="flex justify-between items-start mb-6">
+                                        <div className="w-full">
+                                            <input type="text" value={ev.titel} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, titel: e.target.value} : x))} className="text-2xl md:text-4xl font-black text-gray-900 w-full bg-transparent outline-none mb-2" placeholder="Titel..." />
+                                            <input type="text" value={ev.datum} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, datum: e.target.value} : x))} className="text-lg md:text-xl font-bold text-blue-600 w-full bg-transparent outline-none" placeholder="Datum..." />
+                                        </div>
+                                        <button onClick={() => { vm.setEvents(vm.events.filter(x => x.id !== ev.id)); setSelectedId(null); }} className="text-red-500 p-2"><i className="fa-solid fa-trash text-xl"></i></button>
+                                    </div>
                                     <textarea value={ev.beschreibung} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, beschreibung: e.target.value} : x))} className="w-full h-48 bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-700 outline-none focus:border-blue-500 mb-8" placeholder="Beschreibung..."></textarea>
                                 </div>
                             ))
@@ -952,28 +907,136 @@
             );
         }
 
-        // ==========================================
-        // 8. APP ROUTING
-        // ==========================================
-        function AdminDashboard() {
+        function EinstellungenView() {
             const vm = useViewModel();
-            const tiles = [{ id: 'planer', label: 'Planer', icon: 'fa-regular fa-file-lines', color: 'bg-blue-500' }, { id: 'prozessionen', label: 'Prozessionen', icon: 'fa-solid fa-person-walking', color: 'bg-purple-500' }, { id: 'events', label: 'Events', icon: 'fa-solid fa-champagne-glasses', color: 'bg-pink-500' }, { id: 'vormerken', label: 'Vormerken', icon: 'fa-regular fa-calendar-check', color: 'bg-green-500' }, { id: 'abwesenheiten_admin', label: 'Urlaube', icon: 'fa-solid fa-user-clock', color: 'bg-red-500' }, { id: 'statistik', label: 'Statistik', icon: 'fa-solid fa-chart-column', color: 'bg-orange-500' }, { id: 'notizen', label: 'Notizen', icon: 'fa-regular fa-note-sticky', color: 'bg-yellow-500' }, { id: 'messdiener', label: 'Gruppen', icon: 'fa-solid fa-user-group', color: 'bg-indigo-500' }, { id: 'einstellungen', label: 'Optionen', icon: 'fa-solid fa-gear', color: 'bg-gray-500' }, { id: 'werkzeuge', label: 'Tools', icon: 'fa-solid fa-screwdriver-wrench', color: 'bg-teal-500' }];
+            const SectionBox = ({ icon, title, children }) => (
+                <div className="mb-8"><div className="flex items-center space-x-3 mb-4"><div className="w-8 flex justify-center"><i className={`${icon} text-2xl`}></i></div><h2 className="text-xl font-bold text-gray-800">{title}</h2></div><div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">{children}</div></div>
+            );
             return (
-                <div className="min-h-screen bg-[#f2f2f7] p-6 pb-12 flex flex-col antialiased">
-                    <div className="flex justify-between items-end mb-8 pt-8"><h1 className="text-4xl font-black text-gray-900 tracking-tight">Übersicht</h1><button onClick={() => { vm.setRoute('landing'); vm.setAdminPassword(''); }} className="bg-white px-4 py-2 rounded-full shadow-sm text-sm font-bold text-red-500 border border-gray-200"><i className="fa-solid fa-power-off mr-2"></i>Abmelden</button></div>
-                    <div className="grid grid-cols-2 gap-4">{tiles.map(t => (<div key={t.id} onClick={() => vm.setActiveTab(t.id)} className="ios-card p-6 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform"><div className={`w-14 h-14 ${t.color} text-white rounded-full flex items-center justify-center text-2xl mb-3 shadow-md`}><i className={t.icon}></i></div><span className="font-bold text-gray-800 text-[15px]">{t.label}</span></div>))}</div>
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Einstellungen" />
+                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
+                        <div className="max-w-3xl mx-auto md:mx-0 pb-12">
+                            <div className="hidden md:block mb-8"><h1 className="text-3xl font-bold text-gray-900">Einstellungen</h1></div>
+                            
+                            <SectionBox icon="fa-solid fa-cloud text-blue-500" title="Cloud Synchronisation">
+                                <input type="text" placeholder="Firebase Projekt-ID..." className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 mb-4 outline-none" value={vm.firebaseProjectId} onChange={e => vm.setFirebaseProjectId(e.target.value)} />
+                            </SectionBox>
+
+                            <SectionBox icon="fa-solid fa-lock text-purple-500" title="Passwörter & Sicherheit">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                    <div>
+                                        <label className="block text-sm text-gray-500 mb-1">Passwort: Pfarrbüro</label>
+                                        <input type="password" placeholder={vm.cloudPfarrbueroPassword ? "Hinterlegt (Tippen zum Ändern)" : "Kein Passwort vergeben"} className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 outline-none" onChange={e => { vm.setCloudPfarrbueroPassword(e.target.value.trim()); vm.setPfarrbueroPassword(e.target.value.trim()); }} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm text-gray-500 mb-1">Gemini API Key</label>
+                                        <input type="password" placeholder={vm.apiKey ? "Hinterlegt (Tippen zum Ändern)" : "API Key..."} className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 outline-none" onChange={e => { if (e.target.value.trim() !== '') { vm.setApiKey(e.target.value.trim()); } }} />
+                                    </div>
+                                </div>
+                            </SectionBox>
+
+                            <SectionBox icon="fa-solid fa-users text-orange-500" title="Einteilungs-Mengen">
+                                <div className="flex flex-col md:flex-row md:space-x-12 space-y-4 md:space-y-0">
+                                    <div className="flex items-center justify-between md:justify-start space-x-4 w-full md:w-auto"><span className="text-sm font-medium">Sonntage: {vm.anzahlSonntags}</span><div className="flex border border-gray-300 rounded-lg overflow-hidden"><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlSonntags(Math.max(1, vm.anzahlSonntags - 1))}>-</button><div className="w-px bg-gray-300"></div><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlSonntags(Math.min(10, vm.anzahlSonntags + 1))}>+</button></div></div>
+                                    <div className="flex items-center justify-between md:justify-start space-x-4 w-full md:w-auto"><span className="text-sm font-medium">Werktage: {vm.anzahlWerktags}</span><div className="flex border border-gray-300 rounded-lg overflow-hidden"><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlWerktags(Math.max(1, vm.anzahlWerktags - 1))}>-</button><div className="w-px bg-gray-300"></div><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlWerktags(Math.min(10, vm.anzahlWerktags + 1))}>+</button></div></div>
+                                </div>
+                            </SectionBox>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+        function AbwesenheitenAdminView() {
+            const vm = useViewModel();
+            const sorted = [...vm.abwesenheiten].sort((a,b) => new Date(a.start) - new Date(b.start));
+            const fmt = (iso) => { if(!iso)return""; const p=iso.split('-'); return p.length===3?`${p[2]}.${p[1]}.${p[0]}`:iso; };
+            return (
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Abwesenheiten" />
+                    <div className="flex-1 overflow-y-auto p-4 md:p-10 bg-gray-50/50">
+                        <div className="max-w-5xl mx-auto md:mx-0 pb-12">
+                            <div className="hidden md:flex justify-between items-end mb-8"><div><h1 className="text-3xl font-bold text-gray-900">Eingetragene Abwesenheiten</h1><p className="text-gray-500 mt-1">Hier siehst du alle Urlaube, die über das Online-Formular eingereicht wurden.</p></div><button onClick={() => { if(confirm("Alle abgelaufenen Einträge löschen?")) { const today = new Date(); today.setHours(0,0,0,0); vm.setAbwesenheiten(vm.abwesenheiten.filter(a => new Date(a.end || a.start) >= today)); } }} className="bg-white border border-gray-300 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition hover:bg-gray-50"><i className="fa-solid fa-broom mr-2"></i>Alte löschen</button></div>
+                            {sorted.length === 0 ? (
+                                <div className="text-center p-8 bg-white border border-dashed border-gray-300 rounded-xl mb-8"><p className="text-gray-500">Keine Abwesenheiten eingetragen.</p></div>
+                            ) : (
+                                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden"><div className="divide-y divide-gray-100">{sorted.map(abw => (<div key={abw.id} className="p-4 md:p-6 flex justify-between items-center hover:bg-gray-50"><div><div className="font-bold text-gray-800 text-lg">{abw.name}</div><div className="text-sm text-gray-500 mt-1"><i className="fa-regular fa-calendar mr-2"></i>{abw.type === 'single' ? fmt(abw.start) : `${fmt(abw.start)} - ${fmt(abw.end)}`}</div></div><button onClick={() => { if(confirm("Eintrag löschen?")) vm.setAbwesenheiten(vm.abwesenheiten.filter(x => x.id !== abw.id)); }} className="text-red-400 hover:text-red-600 p-2"><i className="fa-solid fa-trash text-lg"></i></button></div>))}</div></div>
+                            )}
+                        </div>
+                    </div>
                 </div>
             );
         }
 
+        function WerkzeugeView() {
+            const vm = useViewModel();
+            const [kopiert, setKopiert] = useState(false); const [kiLoading, setKiLoading] = useState(false);
+            const handleCopy = () => { const alle = vm.gruppen.flatMap(g => g.mitglieder).sort().join("\n"); navigator.clipboard.writeText(alle); setKopiert(true); setTimeout(() => setKopiert(false), 2000); };
+            const handleKiImport = async () => {
+                if(!vm.apiKey) { alert("Bitte erst den Gemini API Key hinterlegen!"); return; }
+                try {
+                    const text = await navigator.clipboard.readText(); if(!text) { alert("Zwischenablage ist leer!"); return; }
+                    if(confirm("Deine aktuellen Gruppen werden durch die Daten aus der Zwischenablage überschrieben. Fortfahren?")) {
+                        setKiLoading(true);
+                        const body = { contents: [{ parts: [{ text: `Extrahiere Namen und weise sie Gruppen zu. TEXT: ${text}` }] }], generationConfig: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "OBJECT", properties: { name: { type: "STRING" }, mitglieder: { type: "ARRAY", items: { type: "STRING" } } }, required: ["name", "mitglieder"] } } } };
+                        const response = await fetch(`[https://generativelanguage.googleapis.com/v1beta/models/$](https://generativelanguage.googleapis.com/v1beta/models/$){vm.geminiModel}:generateContent?key=${vm.apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+                        const json = await response.json(); let cleanJsonString = json.candidates[0].content.parts[0].text.replace(/^```json/, '').replace(/^```/, '').replace(/```$/, '').trim();
+                        const importierteGruppen = JSON.parse(cleanJsonString); const neueGruppen = importierteGruppen.map(g => ({ id: crypto.randomUUID(), name: g.name, mitglieder: g.mitglieder }));
+                        vm.setGruppen(neueGruppen); let newStat = {...vm.statistik}; neueGruppen.forEach(g => g.mitglieder.forEach(m => { if(newStat[m] === undefined) newStat[m] = 0; })); vm.setStatistik(newStat);
+                        alert("Gruppen erfolgreich importiert!");
+                    }
+                } catch(e) { alert("Fehler: " + e.message); } finally { setKiLoading(false); }
+            };
+            const exportiereGruppenPDF = () => {
+                const { jsPDF } = window.jspdf; const doc = new jsPDF({ unit: 'mm', format: 'a4' }); let currentY_mm = 20;
+                doc.setFontSize(20); doc.setFont("helvetica", "bold"); doc.text("Übersicht: Alle Messdiener-Gruppen", 105, currentY_mm, { align: "center" }); currentY_mm += 15;
+                for (const gruppe of vm.gruppen) {
+                    if (currentY_mm + 15 > 280) { doc.addPage(); currentY_mm = 20; }
+                    doc.setFontSize(16); doc.setFont("helvetica", "bold"); doc.text(`Gruppe ${gruppe.name}`, 20, currentY_mm); currentY_mm += 8; doc.setFontSize(12); doc.setFont("helvetica", "normal");
+                    for (const mini of gruppe.mitglieder) { if (currentY_mm + 6 > 280) { doc.addPage(); currentY_mm = 20; } const prefix = vm.neueMessdiener.includes(mini) ? "* " : "• "; doc.text(`${prefix}${mini}`, 25, currentY_mm); currentY_mm += 6; } currentY_mm += 8;
+                }
+                doc.save("Gruppenliste.pdf");
+            };
+            const ToolBox = ({ icon, title, desc, btnText, onClick, colorClass, btnClass, loading }) => (
+                <div className="bg-white rounded-xl border border-gray-200 p-5 md:p-6 shadow-sm mb-4 md:mb-6"><div className="flex items-center space-x-3 mb-2"><i className={`${icon} ${colorClass} text-2xl w-8 text-center`}></i><h2 className="text-lg md:text-xl font-bold text-gray-800">{title}</h2></div><p className="text-sm md:text-base text-gray-500 mb-5 ml-11">{desc}</p><div className="ml-11"><button onClick={onClick} disabled={loading} className={`${btnClass} px-4 py-2 rounded-lg text-sm font-bold shadow-sm w-full md:w-auto disabled:opacity-50`}>{loading ? 'Verarbeite...' : btnText}</button></div></div>
+            );
+            return (
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Werkzeuge" />
+                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
+                        <div className="max-w-3xl mx-auto md:mx-0">
+                            <div className="hidden md:block mb-8"><h1 className="text-3xl font-bold text-gray-900">Werkzeuge</h1></div>
+                            <ToolBox icon="fa-solid fa-copy" colorClass="text-blue-500" title="Namen kopieren" desc="Kopiert alle Messdiener in die Zwischenablage." btnText={kopiert ? "Kopiert!" : "Kopieren"} onClick={handleCopy} btnClass="bg-blue-600 text-white" />
+                            <ToolBox icon="fa-solid fa-file-pdf" colorClass="text-orange-500" title="Gruppen-Liste (PDF)" desc="Erstellt ein druckfertiges PDF." btnText="Herunterladen" onClick={exportiereGruppenPDF} btnClass="bg-orange-500 text-white" />
+                            <ToolBox icon="fa-solid fa-wand-magic-sparkles" colorClass="text-purple-500" title="KI Import" desc="Kopiere einen Text mit Gruppen und Namen. Die KI überschreibt deine aktuellen Gruppen." btnText="Aus Zwischenablage importieren" onClick={handleKiImport} loading={kiLoading} btnClass="bg-purple-600 text-white" />
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // ==========================================
+        // 8. APP ROUTING
+        // ==========================================
         function AdminApp() {
             const vm = useViewModel();
             const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
             useEffect(() => { const handleResize = () => setIsMobile(window.innerWidth < 768); window.addEventListener('resize', handleResize); return () => window.removeEventListener('resize', handleResize); }, []);
-            if (isMobile && (!vm.activeTab || vm.activeTab === 'menu')) return <AdminDashboard />;
+            
+            if (isMobile) {
+                // Mobile überspringt das Dashboard immer und zeigt direkt den Planer
+                return (
+                    <div className="flex h-screen w-full bg-macBg text-[#1d1d1f] antialiased">
+                        <div className="flex-1 flex flex-col bg-white overflow-hidden shadow-[-4px_0_15px_rgba(0,0,0,0.05)] z-10 relative">
+                            <PlanerView/>
+                        </div>
+                    </div>
+                );
+            }
+
             return (
                 <div className="flex h-screen w-full bg-macBg text-[#1d1d1f] antialiased">
-                    {!isMobile && <Sidebar/>}
+                    <Sidebar/>
                     <div className="flex-1 flex flex-col bg-white overflow-hidden shadow-[-4px_0_15px_rgba(0,0,0,0.05)] z-10 relative">
                         {vm.activeTab === 'planer' && <PlanerView/>}
                         {vm.activeTab === 'prozessionen' && <ProzessionenView/>}
