@@ -2,62 +2,52 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Messdiener Planer</title>
     
-    <!-- Tailwind CSS für das Mac-Design -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
             theme: {
                 extend: {
-                    colors: {
-                        macBg: '#ececec',
-                        macSidebar: '#f5f5f5',
-                        macActive: '#007aff',
-                        macText: '#1d1d1f'
-                    },
-                    fontFamily: {
-                        sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'],
-                    }
+                    colors: { macBg: '#ececec', macSidebar: '#f5f5f5', macActive: '#007aff', macText: '#1d1d1f' },
+                    fontFamily: { sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'] }
                 }
             }
         }
     </script>
 
-    <!-- Icons (als Ersatz für SF Symbols) -->
+    <!-- Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     
-    <!-- Babel (Übersetzt den JSX/React Code im Browser) -->
+    <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- jsPDF für PDF Export -->
+    <!-- jsPDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
     <style>
-        body { 
-            overflow: hidden; 
-            margin: 0; 
-            background-color: #ececec; 
-            -webkit-font-smoothing: antialiased;
-        }
+        body { overflow: hidden; margin: 0; background-color: #ececec; -webkit-font-smoothing: antialiased; }
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.3); }
         input:focus, select:focus, textarea:focus, button:focus { outline: none; }
+        
+        /* iOS Styling für Mobile */
+        .ios-card { background: #ffffff; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
-    <!-- MARK: - React App Logic -->
     <script type="text/babel">
-        const { useState, useEffect, createContext, useContext, useCallback } = React;
+        const { useState, useEffect, createContext, useContext, useRef } = React;
 
         // --- HILFSFUNKTIONEN (@AppStorage) ---
         function useAppStorage(key, initialValue) {
@@ -65,23 +55,47 @@
                 try {
                     const item = window.localStorage.getItem(key);
                     return item ? JSON.parse(item) : initialValue;
-                } catch (error) {
-                    return initialValue;
-                }
+                } catch (error) { return initialValue; }
             });
+            useEffect(() => { window.localStorage.setItem(key, JSON.stringify(state)); }, [key, state]);
+            return [state, setState];
+        }
+
+        // --- AUTOCOMPLETE KOMPONENTE (Für die ganze App) ---
+        function AutocompleteField({ value, onChange, suggestions, placeholder, className }) {
+            const [isOpen, setIsOpen] = useState(false);
+            const wrapperRef = useRef(null);
+
+            const filtered = suggestions.filter(s => s.toLowerCase().includes(value.toLowerCase()) && s.toLowerCase() !== value.toLowerCase());
 
             useEffect(() => {
-                window.localStorage.setItem(key, JSON.stringify(state));
-            }, [key, state]);
+                function handleClickOutside(event) { if (wrapperRef.current && !wrapperRef.current.contains(event.target)) setIsOpen(false); }
+                document.addEventListener("mousedown", handleClickOutside);
+                return () => document.removeEventListener("mousedown", handleClickOutside);
+            }, []);
 
-            return [state, setState];
+            return (
+                <div ref={wrapperRef} className="relative w-full">
+                    <input type="text" value={value} onChange={e => { onChange(e.target.value); setIsOpen(true); }} onFocus={() => setIsOpen(true)} placeholder={placeholder} className={className || "w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-blue-500"} />
+                    {isOpen && filtered.length > 0 && (
+                        <ul className="absolute z-50 w-full bg-white border border-gray-200 shadow-lg rounded-lg mt-1 max-h-40 overflow-y-auto">
+                            {filtered.map(s => (
+                                <li key={s} onClick={() => { onChange(s); setIsOpen(false); }} className="px-4 py-2 hover:bg-blue-50 cursor-pointer text-gray-800 border-b border-gray-50 last:border-0">{s}</li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            );
         }
 
         // --- VIEWMODEL PROVIDER ---
         const ViewModelContext = createContext();
 
         function ViewModelProvider({ children }) {
-            const [activeTab, setActiveTab] = useState('planer');
+            // App Routing State
+            const [route, setRoute] = useAppStorage('appRoute', 'landing'); // 'landing', 'admin', 'pfarrbuero'
+            const [activeTab, setActiveTab] = useState('planer'); // Admin Tabs
+            
             const [isAppLoading, setIsAppLoading] = useState(true);
             const [appState, setAppState] = useAppStorage('appStateRaw', 'upload'); 
             const [laedt, setLaedt] = useState(false);
@@ -90,6 +104,9 @@
             
             // Konfiguration
             const [apiKey, setApiKey] = useAppStorage('geminiApiKey', '');
+            const [adminPassword, setAdminPassword] = useAppStorage('adminPasswordLocal', ''); // Das Passwort für den Admin-Bereich
+            const [cloudAdminPassword, setCloudAdminPassword] = useState(''); // Aus Firebase
+            
             const [geminiModel, setGeminiModel] = useAppStorage('geminiModel', 'gemini-3.6-flash');
             const [firebaseProjectId, setFirebaseProjectId] = useAppStorage('firebaseProjectId', '');
             const [csvTabelleUrl, setCsvTabelleUrl] = useAppStorage('csvTabelleUrl', '');
@@ -97,24 +114,13 @@
             
             const [anzahlSonntags, setAnzahlSonntags] = useAppStorage('anzahlSonntags', 4);
             const [anzahlWerktags, setAnzahlWerktags] = useAppStorage('anzahlWerktags', 2);
-            const [openWhatsAppOnExport, setOpenWhatsAppOnExport] = useAppStorage('openWhatsAppOnExport', false);
             
-            const [pdfGrauerText, setPdfGrauerText] = useAppStorage('pdfGrauerText', 'Wer eingeteilt ist und nicht dienen kann, sucht sich bitte selbstständig eine Vertretung!');
-            const [pdfFooterUeberschrift, setPdfFooterUeberschrift] = useAppStorage('pdfFooterUeberschrift', 'Abwesenheiten eintragen');
-            const [pdfFooterTextSuffix, setPdfFooterTextSuffix] = useAppStorage('pdfFooterTextV2', 'Wenn Abwesenheiten jetzt schon bekannt sind, trage sie ganz einfach online ein.');
-            const [pdfLinkUrl, setPdfLinkUrl] = useAppStorage('pdfLinkUrl', 'https://forms.gle/nSzhoDgeAhUS4QG16');
-
             // Daten
-            const [gruppen, setGruppen] = useAppStorage('gruppenDaten', [
-                { id: crypto.randomUUID(), name: "A", mitglieder: [] },
-                { id: crypto.randomUUID(), name: "B", mitglieder: [] },
-                { id: crypto.randomUUID(), name: "C", mitglieder: [] }
-            ]);
+            const [gruppen, setGruppen] = useAppStorage('gruppenDaten', [{ id: crypto.randomUUID(), name: "A", mitglieder: [] }]);
             const [neueMessdiener, setNeueMessdiener] = useAppStorage('neueMessdienerData', []);
             const [immerZusammen, setImmerZusammen] = useAppStorage('immerZusammenData', []);
             const [nieZusammen, setNieZusammen] = useAppStorage('nieZusammenData', []);
             const [statistik, setStatistik] = useAppStorage('statistikDaten', {});
-            
             const [dienste, setDienste] = useAppStorage('diensteData', []);
             const [vormerkungen, setVormerkungen] = useAppStorage('vormerkungenData', []);
             const [regelmaessigeAbwesenheiten, setRegelmaessigeAbwesenheiten] = useAppStorage('regelmaessigeAbwesenheitenData', []);
@@ -129,14 +135,23 @@
             const [nextGroup2, setNextGroup2] = useAppStorage('nextGroup2', '');
 
             const [pdfFile, setPdfFile] = useState(null);
-            const [firebaseSyncErfolg, setFirebaseSyncErfolg] = useState(false);
 
             // ==========================================
             // MARK: - FIREBASE REST API INTEGRATION
             // ==========================================
             const getFbUrl = (docName) => `https://firestore.googleapis.com/v1/projects/${firebaseProjectId.trim()}/databases/(default)/documents/messdiener/${docName}`;
 
-            // 1. STATISTIK
+            const fetchConfigFromFirebase = async () => {
+                if (!firebaseProjectId.trim()) return;
+                try {
+                    const res = await fetch(getFbUrl('config'));
+                    const data = await res.json();
+                    if (data.fields && data.fields.adminPassword) {
+                        setCloudAdminPassword(data.fields.adminPassword.stringValue);
+                    }
+                } catch (e) { console.log("Config (Passwort) nicht gefunden, erstelle neu beim ersten Sync."); }
+            };
+
             const fetchStatistikFromFirebase = async () => {
                 if (!firebaseProjectId.trim()) return;
                 try {
@@ -153,13 +168,9 @@
                 if (!firebaseProjectId.trim()) return;
                 let fields = {};
                 for (const [key, val] of Object.entries(statistik)) fields[key] = { integerValue: String(val) };
-                try {
-                    const res = await fetch(getFbUrl('statistik'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) });
-                    if (res.ok) { setFirebaseSyncErfolg(true); setTimeout(() => setFirebaseSyncErfolg(false), 3000); }
-                } catch (e) {}
+                await fetch(getFbUrl('statistik'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) });
             };
 
-            // 2. GRUPPEN & NEUE
             const fetchGruppenFromFirebase = async () => {
                 if (!firebaseProjectId.trim()) return;
                 try {
@@ -177,98 +188,48 @@
                 await fetch(getFbUrl('gruppen'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             };
 
-            // 3. REGELN
-            const fetchRegelnFromFirebase = async () => {
-                if (!firebaseProjectId.trim()) return;
-                try {
-                    const res = await fetch(getFbUrl('regeln'));
-                    const data = await res.json();
-                    if (data.fields) {
-                        if (data.fields.immerZusammenJson) setImmerZusammen(JSON.parse(data.fields.immerZusammenJson.stringValue));
-                        if (data.fields.nieZusammenJson) setNieZusammen(JSON.parse(data.fields.nieZusammenJson.stringValue));
-                    }
-                } catch (e) {}
-            };
             const syncRegelnToFirebase = async () => {
                 if (!firebaseProjectId.trim()) return;
                 const payload = { fields: { immerZusammenJson: { stringValue: JSON.stringify(immerZusammen) }, nieZusammenJson: { stringValue: JSON.stringify(nieZusammen) } } };
                 await fetch(getFbUrl('regeln'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             };
 
-            // 4. VORMERKUNGEN & REGELMÄSSIGE ABWESENHEITEN
-            const fetchVormerkungenFromFirebase = async () => {
-                if (!firebaseProjectId.trim()) return;
-                try {
-                    const res = await fetch(getFbUrl('vormerkungen'));
-                    const data = await res.json();
-                    if (data.fields) {
-                        if (data.fields.vormerkungenJson) setVormerkungen(JSON.parse(data.fields.vormerkungenJson.stringValue));
-                        if (data.fields.regelmaessigeAbwesenheitenJson) setRegelmaessigeAbwesenheiten(JSON.parse(data.fields.regelmaessigeAbwesenheitenJson.stringValue));
-                    }
-                } catch (e) {}
-            };
+            // FIX: Eigene Pfade für Vormerkungen & Abwesenheiten
             const syncVormerkungenToFirebase = async () => {
                 if (!firebaseProjectId.trim()) return;
-                const payload = { fields: { vormerkungenJson: { stringValue: JSON.stringify(vormerkungen) }, regelmaessigeAbwesenheitenJson: { stringValue: JSON.stringify(regelmaessigeAbwesenheiten) } } };
+                const payload = { fields: { vormerkungenJson: { stringValue: JSON.stringify(vormerkungen) } } };
                 await fetch(getFbUrl('vormerkungen'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             };
-
-            // 5. EVENTS
-            const fetchEventsFromFirebase = async () => {
+            
+            const syncRegelmaessigeAbwesenheitenToFirebase = async () => {
                 if (!firebaseProjectId.trim()) return;
-                try {
-                    const res = await fetch(getFbUrl('events'));
-                    const data = await res.json();
-                    if (data.fields) {
-                        if (data.fields.eventsJson) setEvents(JSON.parse(data.fields.eventsJson.stringValue));
-                        if (data.fields.deletedEventsJson) setDeletedEvents(JSON.parse(data.fields.deletedEventsJson.stringValue));
-                    }
-                } catch (e) {}
+                const payload = { fields: { abwesenheitenJson: { stringValue: JSON.stringify(regelmaessigeAbwesenheiten) } } };
+                await fetch(getFbUrl('wochenAbwesenheiten'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             };
+
             const syncEventsToFirebase = async () => {
                 if (!firebaseProjectId.trim()) return;
                 const payload = { fields: { eventsJson: { stringValue: JSON.stringify(events) }, deletedEventsJson: { stringValue: JSON.stringify(deletedEvents) } } };
                 await fetch(getFbUrl('events'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             };
 
-            // 6. PROZESSIONEN
-            const fetchProzessionenFromFirebase = async () => {
-                if (!firebaseProjectId.trim()) return;
-                try {
-                    const res = await fetch(getFbUrl('prozessionen'));
-                    const data = await res.json();
-                    if (data.fields && data.fields.prozessionenJson) {
-                        setProzessionen(JSON.parse(data.fields.prozessionenJson.stringValue));
-                    }
-                } catch (e) {}
-            };
             const syncProzessionenToFirebase = async () => {
                 if (!firebaseProjectId.trim()) return;
                 const payload = { fields: { prozessionenJson: { stringValue: JSON.stringify(prozessionen) } } };
                 await fetch(getFbUrl('prozessionen'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             };
 
-            // 7. NOTIZEN
-            const fetchNotizenFromFirebase = async () => {
-                if (!firebaseProjectId.trim()) return;
-                try {
-                    const res = await fetch(getFbUrl('notizen'));
-                    const data = await res.json();
-                    if (data.fields && data.fields.notizenJson) {
-                        setNotizen(JSON.parse(data.fields.notizenJson.stringValue));
-                    }
-                } catch (e) {}
-            };
             const syncNotizenToFirebase = async () => {
                 if (!firebaseProjectId.trim()) return;
                 const payload = { fields: { notizenJson: { stringValue: JSON.stringify(notizen) } } };
                 await fetch(getFbUrl('notizen'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             };
 
-            // Auto-Sync Hooks (Debounced)
+            // Debounced Syncs
             useEffect(() => { const t = setTimeout(() => syncGruppenToFirebase(), 1000); return () => clearTimeout(t); }, [gruppen, neueMessdiener]);
             useEffect(() => { const t = setTimeout(() => syncRegelnToFirebase(), 1000); return () => clearTimeout(t); }, [immerZusammen, nieZusammen]);
-            useEffect(() => { const t = setTimeout(() => syncVormerkungenToFirebase(), 1000); return () => clearTimeout(t); }, [vormerkungen, regelmaessigeAbwesenheiten]);
+            useEffect(() => { const t = setTimeout(() => syncVormerkungenToFirebase(), 1000); return () => clearTimeout(t); }, [vormerkungen]);
+            useEffect(() => { const t = setTimeout(() => syncRegelmaessigeAbwesenheitenToFirebase(), 1000); return () => clearTimeout(t); }, [regelmaessigeAbwesenheiten]);
             useEffect(() => { const t = setTimeout(() => syncEventsToFirebase(), 1000); return () => clearTimeout(t); }, [events, deletedEvents]);
             useEffect(() => { const t = setTimeout(() => syncProzessionenToFirebase(), 1000); return () => clearTimeout(t); }, [prozessionen]);
             useEffect(() => { const t = setTimeout(() => syncNotizenToFirebase(), 1000); return () => clearTimeout(t); }, [notizen]);
@@ -276,376 +237,41 @@
             // Initiale Lade-Simulation & Fetch
             useEffect(() => {
                 const loadAll = async () => {
+                    await fetchConfigFromFirebase();
                     await fetchStatistikFromFirebase();
                     await fetchGruppenFromFirebase();
-                    await fetchRegelnFromFirebase();
-                    await fetchVormerkungenFromFirebase();
-                    await fetchEventsFromFirebase();
-                    await fetchProzessionenFromFirebase();
-                    await fetchNotizenFromFirebase();
+                    try { const res = await fetch(getFbUrl('vormerkungen')); const data = await res.json(); if(data.fields) setVormerkungen(JSON.parse(data.fields.vormerkungenJson.stringValue)); } catch(e){}
+                    try { const res = await fetch(getFbUrl('wochenAbwesenheiten')); const data = await res.json(); if(data.fields) setRegelmaessigeAbwesenheiten(JSON.parse(data.fields.abwesenheitenJson.stringValue)); } catch(e){}
+                    try { const res = await fetch(getFbUrl('events')); const data = await res.json(); if(data.fields) setEvents(JSON.parse(data.fields.eventsJson.stringValue)); } catch(e){}
+                    try { const res = await fetch(getFbUrl('prozessionen')); const data = await res.json(); if(data.fields) setProzessionen(JSON.parse(data.fields.prozessionenJson.stringValue)); } catch(e){}
+                    try { const res = await fetch(getFbUrl('notizen')); const data = await res.json(); if(data.fields) setNotizen(JSON.parse(data.fields.notizenJson.stringValue)); } catch(e){}
                     setTimeout(() => setIsAppLoading(false), 500); 
                 };
                 if(firebaseProjectId) loadAll();
                 else setTimeout(() => setIsAppLoading(false), 800); 
             }, [firebaseProjectId]);
 
-            // ==========================================
-            // MARK: - LOGIK & HELPER
-            // ==========================================
-
-            const toggleNeu = (name) => {
-                setNeueMessdiener(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
-            };
-            const removeMitglied = (groupId, name) => {
-                setGruppen(prev => prev.map(g => g.id === groupId ? { ...g, mitglieder: g.mitglieder.filter(m => m !== name) } : g));
-                setNeueMessdiener(prev => prev.filter(n => n !== name));
-            };
-            const addMitglied = (groupId, name) => {
-                const clean = name.trim();
-                if (!clean) return;
-                setGruppen(prev => prev.map(g => (g.id === groupId && !g.mitglieder.includes(clean)) ? { ...g, mitglieder: [...g.mitglieder, clean] } : g));
-                if (statistik[clean] === undefined) setStatistik(prev => ({ ...prev, [clean]: 0 }));
+            // Set Admin Password in Firebase
+            const saveAdminPasswordToCloud = async (pwd) => {
+                if (!firebaseProjectId.trim()) return;
+                const payload = { fields: { adminPassword: { stringValue: pwd } } };
+                await fetch(getFbUrl('config'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                setCloudAdminPassword(pwd);
             };
 
-            const normalizeTime = (time) => {
-                if(!time) return "";
-                let clean = time.replace(/h/gi, '').replace(/uhr/gi, '').trim();
-                let parts = clean.split(/[:.]/);
-                if (parts.length === 2) {
-                    let h = parts[0].length === 1 ? `0${parts[0]}` : parts[0];
-                    let m = parts[1].length === 1 ? `${parts[1]}0` : (parts[1] === "" ? "00" : parts[1]);
-                    return `${h}.${m}`;
-                } else if (parts.length === 1 && parts[0] !== "") {
-                    let h = parts[0].length === 1 ? `0${parts[0]}` : parts[0];
-                    return `${h}.00`;
-                }
-                return time;
-            };
-
-            const parseDateStr = (str) => {
-                if (!str) return null;
-                const parts = str.match(/\d+/g);
-                if (!parts || parts.length < 2) return null;
-                const d = parseInt(parts[0]);
-                const m = parseInt(parts[1]) - 1;
-                const y = parts.length >= 3 ? parseInt(parts[2]) : new Date().getFullYear();
-                return new Date(y, m, d);
-            };
-
-            const getWeekIdentifier = (dateStr) => {
-                const d = parseDateStr(dateStr);
-                if (!d) return crypto.randomUUID();
-                const dCopy = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-                const dayNum = dCopy.getUTCDay() || 7;
-                dCopy.setUTCDate(dCopy.getUTCDate() + 4 - dayNum);
-                const yearStart = new Date(Date.UTC(dCopy.getUTCFullYear(),0,1));
-                const weekNo = Math.ceil((((dCopy - yearStart) / 86400000) + 1)/7);
-                return `${dCopy.getUTCFullYear()}-${weekNo.toString().padStart(2, '0')}`;
-            };
-
-            const getChronologischeBloecke = () => {
-                let bloecke = [];
-                let currentWeek = null;
-                let currentDienste = [];
-                
-                const sorted = [...dienste].sort((a, b) => {
-                    const d1 = parseDateStr(a.datum) || new Date(0);
-                    const d2 = parseDateStr(b.datum) || new Date(0);
-                    if (d1.getTime() === d2.getTime()) return normalizeTime(a.uhrzeit).localeCompare(normalizeTime(b.uhrzeit));
-                    return d1 - d2;
-                });
-
-                for (let dienst of sorted) {
-                    const w = getWeekIdentifier(dienst.datum);
-                    if (w !== currentWeek) {
-                        if (currentWeek !== null) {
-                            let counts = {};
-                            currentDienste.forEach(d => { if (d.gruppe) counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; });
-                            let domGroup = Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : "Ohne Gruppe";
-                            bloecke.push({ id: currentWeek, gruppe: domGroup, dienste: currentDienste });
-                        }
-                        currentWeek = w;
-                        currentDienste = [dienst];
-                    } else {
-                        currentDienste.push(dienst);
-                    }
-                }
-                if (currentWeek !== null) {
-                    let counts = {};
-                    currentDienste.forEach(d => { if (d.gruppe) counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; });
-                    let domGroup = Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : "Ohne Gruppe";
-                    bloecke.push({ id: currentWeek, gruppe: domGroup, dienste: currentDienste });
-                }
-                return bloecke;
-            };
-
-            const leseGottesdienste = async () => {
-                if (!apiKey) { setFehlerMeldung("Bitte hinterlege deinen Gemini API-Key in den Einstellungen."); return; }
-                if (!pdfFile) { setFehlerMeldung("Bitte wähle eine PDF aus."); return; }
-                setLaedt(true); setFehlerMeldung(null); setLadeStatusText("Lese Datei aus...");
-                try {
-                    const base64String = await new Promise((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onload = () => resolve(reader.result.split(',')[1]);
-                        reader.onerror = reject;
-                        reader.readAsDataURL(pdfFile);
-                    });
-                    setLadeStatusText("KI analysiert Pfarrbrief...");
-                    const systemInstruction = `Du bist ein präziser Parser für Pfarrbrief-Daten. WICHTIGE REGELN:
-1. ORT: Extrahiere AUSSCHLIESSLICH Gottesdienste, die im Ort "Thalau" stattfinden! Ignoriere alles aus "Schmalnau" oder anderen Orten.
-2. ANLASS: Akzeptiere "Hl. Messe", "Taufe", "Hochzeit", "Trauung", "Beerdigung", "Osternacht", "Christmette" sowie alle Termine, die das Wort "Gottesdienst" enthalten. Ignoriere strikt Dinge wie "Rosenkranz", "Andacht", "Krankenkommunion".
-3. GRUPPEN: Suche im Text nach der Gruppeneinteilung für Thalau (z.B. "Thalau Gruppe C") und weise diesen Buchstaben dem Feld 'gruppe' zu.
-4. Gib das Ergebnis strikt im geforderten JSON-Format zurück. Fasse lange Anlässe kurz zusammen.`;
-                    const body = {
-                        systemInstruction: { parts: [{ text: systemInstruction }] },
-                        contents: [{
-                            parts: [
-                                { text: "Analysiere das angehängte Dokument und extrahiere Gottesdienste gemäß den Regeln." },
-                                { inlineData: { mimeType: "application/pdf", data: base64String } }
-                            ]
-                        }],
-                        generationConfig: {
-                            responseMimeType: "application/json",
-                            responseSchema: {
-                                type: "ARRAY",
-                                items: {
-                                    type: "OBJECT",
-                                    properties: {
-                                        datum: { type: "STRING" },
-                                        wochentag: { type: "STRING" },
-                                        uhrzeit: { type: "STRING" },
-                                        anlass: { type: "STRING" },
-                                        gruppe: { type: "STRING" },
-                                        minis: { type: "ARRAY", items: { type: "STRING" } }
-                                    },
-                                    required: ["datum", "wochentag", "uhrzeit", "anlass", "minis"]
-                                }
-                            }
-                        }
-                    };
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`, {
-                        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
-                    });
-                    const json = await response.json();
-                    if (json.error) throw new Error(json.error.message);
-                    const textResponse = json.candidates[0].content.parts[0].text;
-                    let cleanJsonString = textResponse.replace(/^```json/, '').replace(/^```/, '').replace(/```$/, '').trim();
-                    let rawDienste = JSON.parse(cleanJsonString);
-                    let wochenGruppen = {};
-                    rawDienste.forEach(d => { if (d.gruppe) wochenGruppen[getWeekIdentifier(d.datum)] = d.gruppe.replace(/Gruppe/i, '').trim(); });
-                    let alleWochen = [...new Set(rawDienste.map(d => getWeekIdentifier(d.datum)))].sort();
-                    let aktuelleGruppe = nextGroup1 || (gruppen[0]?.name || "A");
-                    if (alleWochen.length > 0 && wochenGruppen[alleWochen[0]]) aktuelleGruppe = wochenGruppen[alleWochen[0]];
-                    const gruppenNamen = gruppen.map(g => g.name);
-                    alleWochen.forEach(woche => {
-                        if (wochenGruppen[woche]) aktuelleGruppe = wochenGruppen[woche];
-                        wochenGruppen[woche] = aktuelleGruppe;
-                        let nextIdx = (gruppenNamen.indexOf(aktuelleGruppe) + 1) % gruppenNamen.length;
-                        aktuelleGruppe = gruppenNamen[nextIdx];
-                    });
-                    const erlaubteAnlaesse = ["Hl. Messe", "Taufe", "Hochzeit", "Beerdigung", "Osternacht", "Christmette"];
-                    let bereinigteDienste = [];
-                    rawDienste.forEach(raw => {
-                        let d = { ...raw, id: crypto.randomUUID(), minis: [], uhrzeit: normalizeTime(raw.uhrzeit || "") };
-                        let currentAnlass = d.anlass || "Hl. Messe";
-                        let isValid = false;
-                        if (erlaubteAnlaesse.includes(currentAnlass)) isValid = true;
-                        else {
-                            let lower = currentAnlass.toLowerCase();
-                            if (lower.includes("taufe")) { currentAnlass = "Taufe"; isValid = true; }
-                            else if (lower.includes("hochzeit") || lower.includes("trauung")) { currentAnlass = "Hochzeit"; isValid = true; }
-                            else if (lower.includes("beerdigung")) { currentAnlass = "Beerdigung"; isValid = true; }
-                            else if (lower.includes("messe") || lower.includes("eucharistie") || lower.includes("hochamt")) { currentAnlass = "Hl. Messe"; isValid = true; }
-                            else if (lower.includes("osternacht")) { currentAnlass = "Osternacht"; isValid = true; }
-                            else if (lower.includes("christmette")) { currentAnlass = "Christmette"; isValid = true; }
-                            else if (lower.includes("gottesdienst")) isValid = true;
-                        }
-                        if (isValid) {
-                            d.anlass = currentAnlass;
-                            let wId = getWeekIdentifier(d.datum);
-                            if (wochenGruppen[wId]) d.gruppe = wochenGruppen[wId];
-                            bereinigteDienste.push(d);
-                        }
-                    });
-                    setDienste(bereinigteDienste);
-                    setAppState('review');
-                } catch (e) { setFehlerMeldung("KI Fehler: " + e.message); } 
-                finally { setLaedt(false); }
-            };
-
-            const teileEin = async () => {
-                setLaedt(true); setLadeStatusText("Berechne faire Einteilung...");
-                setTimeout(() => {
-                    let neueDienste = [...dienste];
-                    neueDienste.forEach(d => {
-                        if(d.minis.length === 0 && !d.manuellerBedarf && !d.manuellerText) {
-                            let woche = d.wochentag.toLowerCase();
-                            let count = (woche.includes('sonntag') || woche.includes('feiertag')) ? anzahlSonntags : anzahlWerktags;
-                            
-                            // Check for Vormerkungen first
-                            const match = vormerkungen.find(v => v.datum === d.datum && (normalizeTime(v.uhrzeit) === normalizeTime(d.uhrzeit) || v.uhrzeit === "" || v.uhrzeit === "Ganztägig"));
-                            if (match) {
-                                d.minis = [...match.minis];
-                            } else {
-                                let g = gruppen.find(gr => gr.name === d.gruppe);
-                                if (g && g.mitglieder.length > 0) {
-                                    d.minis = [...g.mitglieder].sort(() => 0.5 - Math.random()).slice(0, count);
-                                } else {
-                                    d.minis = [];
-                                }
-                            }
-                        }
-                    });
-                    setDienste(neueDienste);
-                    setAppState('assigned');
-                    setLaedt(false);
-                }, 1500);
-            };
-
-            const resetApp = () => {
-                setAppState('upload');
-                setDienste([]);
-                setPdfFile(null);
-            };
-
-            // PDF EXPORT (jsPDF)
-            const exportierePDF = () => {
-                const { jsPDF } = window.jspdf;
-                const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-                
-                let currentY_mm = 15;
-                const pageWidth = 210; // A4 width in mm
-                
-                const checkPageBreak = (required_mm) => {
-                    if (currentY_mm + required_mm > 280) {
-                        doc.addPage();
-                        currentY_mm = 20;
-                    }
-                };
-
-                // Title
-                doc.setFontSize(22);
-                doc.setFont("helvetica", "bold");
-                doc.text("Einteilung der Messdiener/innen", pageWidth/2, currentY_mm, { align: "center" });
-                currentY_mm += 15;
-
-                const bloecke = getChronologischeBloecke();
-                
-                for (const block of bloecke) {
-                    const timeRange = customGroupDateRanges[block.id] || "Woche " + block.id;
-                    const cleanGruppe = block.gruppe.replace(/Gruppe/i, '').trim();
-                    
-                    checkPageBreak(20);
-                    doc.setFontSize(14);
-                    doc.setFont("helvetica", "bold");
-                    doc.text(`Gruppe ${cleanGruppe}: ${timeRange}`, pageWidth/2, currentY_mm, { align: "center" });
-                    currentY_mm += 8;
-                    
-                    for (const dienst of block.dienste) {
-                        const requiredH = 8 + (Math.max(dienst.minis.length, 1) * 6) + 6;
-                        checkPageBreak(requiredH);
-                        
-                        let cleanUhrzeit = dienst.uhrzeit.replace(/h/i, '').trim();
-                        if (!cleanUhrzeit.toLowerCase().endsWith("uhr")) cleanUhrzeit += " Uhr";
-                        
-                        doc.setFontSize(12);
-                        doc.setFont("helvetica", "bold");
-                        doc.text(`${dienst.wochentag} ${dienst.datum} ${dienst.anlass} ${cleanUhrzeit}`, 20, currentY_mm);
-                        currentY_mm += 6;
-                        
-                        doc.setFont("helvetica", "normal");
-                        if (dienst.manuellerText) {
-                            doc.text(dienst.manuellerText, 20, currentY_mm);
-                            currentY_mm += 6;
-                        } else if (dienst.manuellerBedarf) {
-                            doc.text(`Es werden ${dienst.manuellerBedarf} Messdiener/innen benötigt.`, 20, currentY_mm);
-                            currentY_mm += 6;
-                        } else if (dienst.minis.length === 0) {
-                            doc.text("-", 20, currentY_mm);
-                            currentY_mm += 6;
-                        } else {
-                            for (const mini of dienst.minis) {
-                                doc.text(mini, 20, currentY_mm);
-                                currentY_mm += 6;
-                            }
-                        }
-                        currentY_mm += 4;
-                    }
-                }
-                
-                // Footer
-                currentY_mm += 10;
-                checkPageBreak(40);
-                
-                doc.setFontSize(11);
-                doc.setFont("helvetica", "bold");
-                const splitGrau = doc.splitTextToSize(pdfGrauerText, 170);
-                doc.text(splitGrau, 20, currentY_mm);
-                currentY_mm += (splitGrau.length * 5) + 10;
-                
-                // Grau hinterlegte Box
-                doc.setFillColor(245, 245, 245);
-                doc.roundedRect(20, currentY_mm, 170, 30, 3, 3, "F");
-                
-                doc.setFontSize(12);
-                doc.text(pdfFooterUeberschrift, pageWidth/2, currentY_mm + 8, { align: "center" });
-                
-                doc.setFontSize(10);
-                doc.setFont("helvetica", "normal");
-                const cleanG1 = nextGroup1.replace(/Gruppe/i, '').trim();
-                const cleanG2 = nextGroup2.replace(/Gruppe/i, '').trim();
-                const vollerDynText = `In den kommenden zwei Wochen sind Gruppe ${cleanG1} und ${cleanG2} dran. ${pdfFooterTextSuffix}`;
-                const splitDyn = doc.splitTextToSize(vollerDynText, 150);
-                doc.text(splitDyn, pageWidth/2, currentY_mm + 15, { align: "center" });
-                
-                doc.save("Messdienerplan.pdf");
-            };
-
-            const exportiereGruppenPDF = () => {
-                const { jsPDF } = window.jspdf;
-                const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-                let currentY_mm = 20;
-                const pageWidth = 210;
-
-                doc.setFontSize(20);
-                doc.setFont("helvetica", "bold");
-                doc.text("Übersicht: Alle Messdiener-Gruppen", pageWidth/2, currentY_mm, { align: "center" });
-                currentY_mm += 15;
-
-                for (const gruppe of gruppen) {
-                    if (currentY_mm + 15 > 280) { doc.addPage(); currentY_mm = 20; }
-                    doc.setFontSize(16);
-                    doc.setFont("helvetica", "bold");
-                    doc.text(`Gruppe ${gruppe.name}`, 20, currentY_mm);
-                    currentY_mm += 8;
-                    
-                    doc.setFontSize(12);
-                    doc.setFont("helvetica", "normal");
-                    for (const mini of gruppe.mitglieder) {
-                        if (currentY_mm + 6 > 280) { doc.addPage(); currentY_mm = 20; }
-                        const prefix = neueMessdiener.includes(mini) ? "* " : "• ";
-                        doc.text(`${prefix}${mini}`, 25, currentY_mm);
-                        currentY_mm += 6;
-                    }
-                    currentY_mm += 8;
-                }
-                doc.save("Gruppenliste.pdf");
-            };
+            const alleMinis = gruppen.flatMap(g => g.mitglieder).sort();
 
             const value = {
-                activeTab, setActiveTab,
-                isAppLoading, laedt, ladeStatusText, fehlerMeldung, setFehlerMeldung,
-                appState, setAppState,
-                apiKey, setApiKey, geminiModel, setGeminiModel, firebaseProjectId, setFirebaseProjectId, csvTabelleUrl, setCsvTabelleUrl, iCalUrl, setICalUrl,
-                anzahlSonntags, setAnzahlSonntags, anzahlWerktags, setAnzahlWerktags, openWhatsAppOnExport, setOpenWhatsAppOnExport,
-                pdfGrauerText, setPdfGrauerText, pdfFooterUeberschrift, setPdfFooterUeberschrift, pdfFooterTextSuffix, setPdfFooterTextSuffix, pdfLinkUrl, setPdfLinkUrl,
-                gruppen, setGruppen, toggleNeu, neueMessdiener, removeMitglied, addMitglied, immerZusammen, setImmerZusammen, nieZusammen, setNieZusammen, statistik, setStatistik,
+                route, setRoute, activeTab, setActiveTab,
+                isAppLoading, laedt, setLaedt, ladeStatusText, setLadeStatusText, fehlerMeldung, setFehlerMeldung, appState, setAppState,
+                apiKey, setApiKey, adminPassword, setAdminPassword, cloudAdminPassword, saveAdminPasswordToCloud,
+                geminiModel, setGeminiModel, firebaseProjectId, setFirebaseProjectId, csvTabelleUrl, setCsvTabelleUrl, iCalUrl, setICalUrl,
+                anzahlSonntags, setAnzahlSonntags, anzahlWerktags, setAnzahlWerktags,
+                gruppen, setGruppen, neueMessdiener, setNeueMessdiener, immerZusammen, setImmerZusammen, nieZusammen, setNieZusammen, statistik, setStatistik,
                 dienste, setDienste, vormerkungen, setVormerkungen, regelmaessigeAbwesenheiten, setRegelmaessigeAbwesenheiten, newsItems, setNewsItems, notizen, setNotizen,
                 events, setEvents, prozessionen, setProzessionen,
                 customGroupDateRanges, setCustomGroupDateRanges, nextGroup1, setNextGroup1, nextGroup2, setNextGroup2,
-                pdfFile, setPdfFile, leseGottesdienste, teileEin, resetApp, getChronologischeBloecke,
-                fetchStatistikFromFirebase, syncStatistikToFirebase, firebaseSyncErfolg,
-                exportierePDF, exportiereGruppenPDF, normalizeTime, parseDateStr
+                pdfFile, setPdfFile, alleMinis
             };
 
             return <ViewModelContext.Provider value={value}>{children}</ViewModelContext.Provider>;
@@ -654,7 +280,7 @@
         const useViewModel = () => useContext(ViewModelContext);
 
         // ==========================================
-        // MARK: - UI COMPONENTS
+        // MARK: - APP ROUTER & LANDING PAGE
         // ==========================================
 
         function LoginOverlay() {
@@ -663,61 +289,179 @@
             if (vm.apiKey) return null;
 
             return (
-                <div className="fixed inset-0 z-[100] bg-[#ececec] flex items-center justify-center">
-                    <div className="bg-white p-10 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.1)] max-w-md w-full text-center border border-gray-200">
-                        <i className="fa-solid fa-lock text-5xl text-blue-500 mb-6"></i>
-                        <h2 className="text-2xl font-bold text-gray-900 mb-2">Anmeldung erforderlich</h2>
-                        <p className="text-gray-500 mb-8 leading-relaxed">Bitte gib das Zugangs-Passwort (API-Key) ein, um den Messdiener Planer zu öffnen.</p>
-                        <input type="password" placeholder="Passwort eingeben..." className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-6 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 outline-none transition" value={inputKey} onChange={(e) => setInputKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && inputKey.trim() !== '') { vm.setApiKey(inputKey.trim()); } }} />
-                        <button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg py-3 rounded-xl transition shadow-md disabled:opacity-50 disabled:cursor-not-allowed" disabled={!inputKey.trim()} onClick={() => vm.setApiKey(inputKey.trim())}>Entsperren</button>
+                <div className="fixed inset-0 z-[100] bg-[#ececec] flex items-center justify-center p-4">
+                    <div className="bg-white p-10 rounded-3xl shadow-xl max-w-md w-full text-center">
+                        <i className="fa-solid fa-database text-5xl text-blue-500 mb-6"></i>
+                        <h2 className="text-2xl font-bold text-gray-900 mb-2">Datenbank-Verbindung</h2>
+                        <p className="text-gray-500 mb-8">Bitte gib den Master-API-Key ein, um die App mit der Datenbank zu koppeln. Dies ist nur einmalig nötig.</p>
+                        <input type="password" placeholder="API Key..." className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-6 outline-none focus:border-blue-500" value={inputKey} onChange={e => setInputKey(e.target.value)} />
+                        <button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg py-3 rounded-xl transition" onClick={() => vm.setApiKey(inputKey.trim())}>App entsperren</button>
                     </div>
                 </div>
             );
         }
-        
-        function Sidebar() {
-            const { activeTab, setActiveTab } = useViewModel();
-            const menuItems = [
-                { section: "Arbeitsbereich", items: [
-                    { id: 'planer', label: 'Planer', icon: 'fa-regular fa-file-lines' },
-                    { id: 'prozessionen', label: 'Prozessionen', icon: 'fa-solid fa-person-walking' },
-                    { id: 'events', label: 'Events & Aktionen', icon: 'fa-solid fa-champagne-glasses' },
-                    { id: 'vormerken', label: 'Vormerken', icon: 'fa-regular fa-calendar-check' },
-                    { id: 'statistik', label: 'Statistik', icon: 'fa-solid fa-chart-column' },
-                    { id: 'notizen', label: 'Notizen', icon: 'fa-regular fa-note-sticky' },
-                    { id: 'werkzeuge', label: 'Werkzeuge', icon: 'fa-solid fa-screwdriver-wrench' }
-                ]},
-                { section: "Konfiguration", items: [
-                    { id: 'messdiener', label: 'Messdiener & Gruppen', icon: 'fa-solid fa-user-group' },
-                    { id: 'einstellungen', label: 'Einstellungen', icon: 'fa-solid fa-gear' }
-                ]}
-            ];
+
+        function LandingPage() {
+            const vm = useViewModel();
+            const [showAdminLogin, setShowAdminLogin] = useState(false);
+            const [pwdInput, setPwdInput] = useState("");
+
+            const handleAdminLogin = () => {
+                if (!vm.cloudAdminPassword) {
+                    // Erstes Mal Admin Passwort setzen
+                    if(pwdInput.length > 3) {
+                        vm.saveAdminPasswordToCloud(pwdInput);
+                        vm.setAdminPassword(pwdInput);
+                        vm.setRoute('admin');
+                    } else alert("Passwort muss mindestens 4 Zeichen lang sein.");
+                } else {
+                    if (pwdInput === vm.cloudAdminPassword) {
+                        vm.setAdminPassword(pwdInput);
+                        vm.setRoute('admin');
+                    } else alert("Falsches Passwort!");
+                }
+            };
+
+            if (showAdminLogin) {
+                return (
+                    <div className="flex h-screen w-full items-center justify-center bg-[#ececec] p-4">
+                        <div className="bg-white p-10 rounded-3xl shadow-xl max-w-md w-full text-center relative">
+                            <button onClick={() => setShowAdminLogin(false)} className="absolute top-6 left-6 text-gray-400 hover:text-gray-800"><i className="fa-solid fa-arrow-left text-xl"></i></button>
+                            <i className="fa-solid fa-lock text-5xl text-gray-800 mb-6 mt-4"></i>
+                            <h2 className="text-2xl font-bold text-gray-900 mb-2">Admin-Bereich</h2>
+                            <p className="text-gray-500 mb-8">{!vm.cloudAdminPassword ? "Erstelle jetzt dein Admin-Passwort:" : "Bitte gib dein Admin-Passwort ein:"}</p>
+                            <input type="password" placeholder="Passwort..." value={pwdInput} onChange={e => setPwdInput(e.target.value)} onKeyDown={e => e.key==='Enter' && handleAdminLogin()} className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-6 outline-none focus:border-gray-800 text-center" />
+                            <button onClick={handleAdminLogin} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-lg py-3 rounded-xl transition">Einloggen</button>
+                        </div>
+                    </div>
+                );
+            }
 
             return (
-                <div className="w-[260px] h-full bg-[#f5f5f5] border-r border-gray-300 flex flex-col select-none z-20">
-                    <div className="p-4 pt-10 pb-6 text-xl font-bold text-gray-800 ml-2">Messdiener Planer</div>
-                    <div className="flex-1 overflow-y-auto px-3">
-                        {menuItems.map((section, sIdx) => (
-                            <div key={sIdx} className="mb-6">
-                                <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2 ml-2">{section.section}</h3>
-                                <ul className="space-y-1">
-                                    {section.items.map(item => (
-                                        <li key={item.id}>
-                                            <button onClick={() => setActiveTab(item.id)} className={`w-full flex items-center px-3 py-2 rounded-lg transition text-[14px] font-medium ${activeTab === item.id ? 'bg-[#007aff] text-white shadow-sm' : 'text-gray-700 hover:bg-gray-200'}`}>
-                                                <i className={`${item.icon} w-5 text-center ${activeTab === item.id ? 'text-white' : 'text-blue-500'}`}></i>
-                                                <span className="ml-2">{item.label}</span>
-                                            </button>
-                                        </li>
-                                    ))}
-                                </ul>
-                            </div>
-                        ))}
+                <div className="flex h-screen w-full items-center justify-center bg-white p-4">
+                    <div className="max-w-lg w-full text-center flex flex-col items-center">
+                        <img src="Messdiener.png" alt="Logo" className="w-48 h-48 object-contain mb-6 drop-shadow-md rounded-3xl" onError={(e) => { e.target.style.display='none'; }} />
+                        <h1 className="text-4xl md:text-5xl font-black text-gray-900 mb-2 tracking-tight">Messdienerplan</h1>
+                        <h2 className="text-2xl font-bold text-blue-600 mb-12">Thalau</h2>
+                        
+                        <div className="w-full space-y-4 px-4">
+                            <button onClick={() => {
+                                if(vm.adminPassword && vm.adminPassword === vm.cloudAdminPassword) vm.setRoute('admin');
+                                else setShowAdminLogin(true);
+                            }} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-xl py-4 rounded-2xl shadow-lg transition flex items-center justify-center">
+                                <i className="fa-solid fa-desktop mr-3"></i>Planer öffnen
+                            </button>
+                            
+                            <button onClick={() => vm.setRoute('pfarrbuero')} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-700 font-bold text-xl py-4 rounded-2xl transition flex items-center justify-center">
+                                <i className="fa-solid fa-calendar-check mr-3"></i>Messdiener Vormerken
+                            </button>
+                        </div>
                     </div>
                 </div>
             );
         }
 
-        // --- VIEWS ---
+        // --- PFARRBÜRO VIEW (Mobil optimiert) ---
+        function PfarrbueroView() {
+            const vm = useViewModel();
+            const [datum, setDatum] = useState('');
+            const [anlass, setAnlass] = useState('');
+            const [uhrzeit, setUhrzeit] = useState('');
+            const [minis, setMinis] = useState([""]);
+
+            const updateMini = (idx, val) => { let nm = [...minis]; nm[idx] = val; setMinis(nm); };
+            const addMini = () => setMinis([...minis, ""]);
+
+            const handleSave = () => {
+                if(!datum) { alert("Bitte ein Datum eingeben!"); return; }
+                const cleanMinis = minis.filter(m => m.trim() !== "");
+                
+                // Wochentag berechnen
+                const parts = datum.split('-');
+                let wt = "Sonntag";
+                if(parts.length === 3) {
+                    const d = new Date(parts[0], parts[1]-1, parts[2]);
+                    const days = ['Sonntag','Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag'];
+                    wt = days[d.getDay()];
+                }
+                // Datum formatieren DD.MM.YYYY
+                const formattedDate = parts.length === 3 ? `${parts[2]}.${parts[1]}.${parts[0]}` : datum;
+
+                const neueVormerkung = { id: crypto.randomUUID(), datum: formattedDate, wochentag: wt, uhrzeit: uhrzeit, anlass: anlass || "Gottesdienst", minis: cleanMinis };
+                vm.setVormerkungen([...vm.vormerkungen, neueVormerkung]);
+                
+                alert("Erfolgreich vorgemerkt!");
+                setDatum(''); setAnlass(''); setUhrzeit(''); setMinis([""]);
+                vm.setRoute('landing');
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-50 flex flex-col">
+                    <div className="bg-blue-600 text-white p-4 pt-10 flex items-center shadow-md sticky top-0 z-10">
+                        <button onClick={() => vm.setRoute('landing')} className="text-white hover:text-blue-200 p-2"><i className="fa-solid fa-chevron-left text-xl"></i></button>
+                        <h1 className="text-xl font-bold ml-4 flex-1">Vormerken (Pfarrbüro)</h1>
+                    </div>
+                    
+                    <div className="p-6 flex-1 max-w-2xl mx-auto w-full">
+                        <div className="bg-blue-50 text-blue-800 p-4 rounded-xl mb-8 text-sm leading-relaxed border border-blue-100">
+                            <i className="fa-solid fa-circle-info mr-2"></i>
+                            Hier können Sie Messdiener eintragen, die sich bereits für einen bestimmten Gottesdienst gemeldet haben. Die App teilt diese Personen bei der nächsten Berechnung automatisch fest ein.
+                        </div>
+
+                        <div className="space-y-6">
+                            <div className="ios-card p-5 border border-gray-100">
+                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Datum *</label>
+                                <input type="date" value={datum} onChange={e => setDatum(e.target.value)} className="w-full text-lg border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent" />
+                            </div>
+
+                            <div className="ios-card p-5 border border-gray-100 flex space-x-4">
+                                <div className="flex-1">
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Uhrzeit</label>
+                                    <input type="text" placeholder="z.B. 09.30" value={uhrzeit} onChange={e => setUhrzeit(e.target.value)} className="w-full text-lg border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent" />
+                                </div>
+                                <div className="flex-1">
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Anlass</label>
+                                    <input type="text" placeholder="z.B. Taufe" value={anlass} onChange={e => setAnlass(e.target.value)} className="w-full text-lg border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent" />
+                                </div>
+                            </div>
+
+                            <div className="ios-card p-5 border border-gray-100">
+                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-4">Fest eingeteilte Personen</label>
+                                {minis.map((m, i) => (
+                                    <div key={i} className="flex items-center mb-3">
+                                        <span className="text-gray-400 font-medium mr-3">{i+1}.</span>
+                                        <AutocompleteField value={m} onChange={(val) => updateMini(i, val)} suggestions={vm.alleMinis} placeholder="Name suchen..." className="flex-1 border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent text-lg" />
+                                    </div>
+                                ))}
+                                <button onClick={addMini} className="mt-4 text-blue-600 font-bold flex items-center"><i className="fa-solid fa-circle-plus mr-2"></i>Weitere Person</button>
+                            </div>
+
+                            <button onClick={handleSave} className="w-full bg-blue-600 active:bg-blue-700 text-white font-bold text-xl py-4 rounded-xl shadow-lg mt-8 mb-10 transition">
+                                Vormerkung Speichern
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+        // ==========================================
+        // MARK: - ADMIN VIEWS (Desktop & Mobile)
+        // ==========================================
+
+        // --- Mobile TopBar (für die Navigation auf dem Smartphone) ---
+        function MobileTopBar({ title }) {
+            const vm = useViewModel();
+            return (
+                <div className="md:hidden bg-white text-gray-900 p-4 pt-10 flex items-center shadow-sm sticky top-0 z-50 border-b border-gray-200">
+                    <button onClick={() => vm.setActiveTab('menu')} className="text-blue-600 hover:text-blue-800 p-2 pl-0">
+                        <i className="fa-solid fa-chevron-left text-xl mr-1"></i> Menü
+                    </button>
+                    <h1 className="text-xl font-bold ml-2 flex-1 truncate">{title}</h1>
+                </div>
+            );
+        }
+
+        // --- EINSTELLUNGEN ---
         function EinstellungenView() {
             const vm = useViewModel();
             const SectionBox = ({ icon, title, children }) => (
@@ -730,128 +474,131 @@
                 </div>
             );
             return (
-                <div className="h-full overflow-y-auto p-10 bg-gray-50/50">
-                    <div className="max-w-3xl">
-                        <div className="mb-8"><h1 className="text-3xl font-bold text-gray-900">Einstellungen</h1><p className="text-gray-500 text-lg mt-1">Konfiguriere Schnittstellen, Layouts und Regeln.</p></div>
-                        <SectionBox icon="fa-solid fa-cloud text-blue-500" title="Cloud Synchronisation (Firebase)">
-                            <p className="text-sm text-gray-500 mb-3">Trage hier deine Firestore Projekt-ID ein, um die Daten live zu synchronisieren.</p>
-                            <input type="text" placeholder="Firebase Projekt-ID (z.B. messdienerplan-b8c62)" className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 mb-4 outline-none" value={vm.firebaseProjectId} onChange={e => vm.setFirebaseProjectId(e.target.value)} />
-                            <div className="flex items-center space-x-4">
-                                <button onClick={vm.syncStatistikToFirebase} disabled={!vm.firebaseProjectId} className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-bold disabled:opacity-50 transition border border-gray-300">
-                                    <i className="fa-solid fa-arrow-rotate-right mr-2"></i>Jetzt manuell synchronisieren
-                                </button>
-                                {vm.firebaseSyncErfolg && <span className="text-green-500 text-sm font-bold"><i className="fa-solid fa-check mr-1"></i>Erfolgreich</span>}
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Einstellungen" />
+                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
+                        <div className="max-w-3xl mx-auto md:mx-0">
+                            <div className="hidden md:block mb-8">
+                                <h1 className="text-3xl font-bold text-gray-900">Einstellungen</h1>
+                                <p className="text-gray-500 text-lg mt-1">Konfiguriere Schnittstellen, Layouts und Regeln.</p>
                             </div>
-                        </SectionBox>
-                        <SectionBox icon="fa-solid fa-brain text-purple-500" title="Künstliche Intelligenz & Datenbanken">
-                            <div className="grid grid-cols-2 gap-6 mb-4">
-                                <div>
-                                    <label className="block text-sm text-gray-500 mb-1">Passwort / API Key</label>
-                                    <input type="password" placeholder={vm.apiKey ? "Bereits hinterlegt (Zum Ändern tippen)" : "Passwort eingeben"} className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 outline-none" onChange={e => { if (e.target.value.trim() !== '') { vm.setApiKey(e.target.value.trim()); } }} />
-                                </div>
-                                <div>
-                                    <label className="block text-sm text-gray-500 mb-1">KI Modell</label>
-                                    <select className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm bg-white outline-none" value={vm.geminiModel} onChange={e => vm.setGeminiModel(e.target.value)}>
-                                        <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-                                        <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-                                        <option value="gemini-3.6-flash">Gemini 3.6 Flash (Standard)</option>
-                                        <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </SectionBox>
-                        <SectionBox icon="fa-solid fa-users text-orange-500" title="Einteilungs-Mengen">
-                            <div className="flex space-x-12">
-                                <div className="flex items-center space-x-4">
-                                    <span className="text-sm font-medium">Sonntage & Feiertage: {vm.anzahlSonntags} Minis</span>
-                                    <div className="flex border border-gray-300 rounded-lg overflow-hidden">
-                                        <button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlSonntags(Math.max(1, vm.anzahlSonntags - 1))}>-</button>
-                                        <div className="w-px bg-gray-300"></div>
-                                        <button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlSonntags(Math.min(10, vm.anzahlSonntags + 1))}>+</button>
+                            <SectionBox icon="fa-solid fa-cloud text-blue-500" title="Cloud Synchronisation">
+                                <p className="text-sm text-gray-500 mb-3">Trage hier deine Firestore Projekt-ID ein, um die Daten live zu synchronisieren.</p>
+                                <input type="text" placeholder="Firebase Projekt-ID (z.B. messdienerplan-b8c62)" className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 mb-4 outline-none" value={vm.firebaseProjectId} onChange={e => vm.setFirebaseProjectId(e.target.value)} />
+                            </SectionBox>
+                            <SectionBox icon="fa-solid fa-brain text-purple-500" title="KI & Sicherheit">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+                                    <div>
+                                        <label className="block text-sm text-gray-500 mb-1">Passwort / API Key</label>
+                                        <input type="password" placeholder={vm.apiKey ? "Bereits hinterlegt (Tippen zum Ändern)" : "API Key..."} className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 outline-none" onChange={e => { if (e.target.value.trim() !== '') { vm.setApiKey(e.target.value.trim()); } }} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm text-gray-500 mb-1">KI Modell</label>
+                                        <select className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm bg-white outline-none" value={vm.geminiModel} onChange={e => vm.setGeminiModel(e.target.value)}>
+                                            <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                                            <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                                            <option value="gemini-3.6-flash">Gemini 3.6 Flash (Standard)</option>
+                                        </select>
                                     </div>
                                 </div>
-                                <div className="flex items-center space-x-4">
-                                    <span className="text-sm font-medium">Werktage: {vm.anzahlWerktags} Minis</span>
-                                    <div className="flex border border-gray-300 rounded-lg overflow-hidden">
-                                        <button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlWerktags(Math.max(1, vm.anzahlWerktags - 1))}>-</button>
-                                        <div className="w-px bg-gray-300"></div>
-                                        <button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlWerktags(Math.min(10, vm.anzahlWerktags + 1))}>+</button>
+                            </SectionBox>
+                            <SectionBox icon="fa-solid fa-users text-orange-500" title="Einteilungs-Mengen">
+                                <div className="flex flex-col md:flex-row md:space-x-12 space-y-4 md:space-y-0">
+                                    <div className="flex items-center justify-between md:justify-start space-x-4 w-full md:w-auto">
+                                        <span className="text-sm font-medium">Sonntage/Feiertage: {vm.anzahlSonntags}</span>
+                                        <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+                                            <button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlSonntags(Math.max(1, vm.anzahlSonntags - 1))}>-</button>
+                                            <div className="w-px bg-gray-300"></div>
+                                            <button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlSonntags(Math.min(10, vm.anzahlSonntags + 1))}>+</button>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center justify-between md:justify-start space-x-4 w-full md:w-auto">
+                                        <span className="text-sm font-medium">Werktage: {vm.anzahlWerktags}</span>
+                                        <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+                                            <button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlWerktags(Math.max(1, vm.anzahlWerktags - 1))}>-</button>
+                                            <div className="w-px bg-gray-300"></div>
+                                            <button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlWerktags(Math.min(10, vm.anzahlWerktags + 1))}>+</button>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        </SectionBox>
+                            </SectionBox>
+                        </div>
                     </div>
                 </div>
             );
         }
 
+        // --- MESSDIENER ---
         function MessdienerView() {
             const vm = useViewModel();
             const [neuerNameInputs, setNeuerNameInputs] = useState({});
             const handleAdd = (groupId) => { const name = neuerNameInputs[groupId] || ""; vm.addMitglied(groupId, name); setNeuerNameInputs({ ...neuerNameInputs, [groupId]: "" }); };
-            const addGroup = () => { if (vm.gruppen.length < 6) { const nextLetter = String.fromCharCode(65 + vm.gruppen.length); vm.setGruppen([...vm.gruppen, { id: crypto.randomUUID(), name: nextLetter, mitglieder: [] }]); } };
+            
             return (
-                <div className="h-full overflow-y-auto p-10 bg-gray-50/50">
-                    <div className="max-w-4xl">
-                        <div className="flex justify-between items-end mb-8">
-                            <div><h1 className="text-3xl font-bold text-gray-900">Gruppen verwalten ({vm.gruppen.length}/6)</h1><p className="text-gray-500 text-lg mt-1">Lege fest, wer wann dient und wer noch lernt.</p></div>
-                            <button onClick={addGroup} disabled={vm.gruppen.length >= 6} className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition disabled:opacity-50"><i className="fa-solid fa-plus mr-2"></i>Gruppe hinzufügen</button>
-                        </div>
-                        <div className="grid grid-cols-2 gap-6 mb-12">
-                            {vm.gruppen.map((gruppe) => (
-                                <div key={gruppe.id} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <div className="flex items-center space-x-2">
-                                            <span className="font-bold text-lg text-gray-800">Gruppe</span>
-                                            <input type="text" value={gruppe.name} onChange={(e) => vm.setGruppen(vm.gruppen.map(g => g.id === gruppe.id ? {...g, name: e.target.value} : g))} className="font-bold text-lg w-12 border-b border-transparent focus:border-blue-500 focus:bg-gray-50 outline-none" />
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Messdiener" />
+                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
+                        <div className="max-w-4xl mx-auto md:mx-0">
+                            <div className="hidden md:flex justify-between items-end mb-8">
+                                <div><h1 className="text-3xl font-bold text-gray-900">Gruppen ({vm.gruppen.length}/6)</h1><p className="text-gray-500 text-lg mt-1">Lege fest, wer wann dient.</p></div>
+                                <button onClick={() => { if (vm.gruppen.length < 6) vm.setGruppen([...vm.gruppen, { id: crypto.randomUUID(), name: String.fromCharCode(65 + vm.gruppen.length), mitglieder: [] }]); }} className="bg-white border border-gray-300 px-4 py-2 rounded-lg text-sm font-medium shadow-sm"><i className="fa-solid fa-plus mr-2"></i>Gruppe hinzufügen</button>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+                                {vm.gruppen.map((gruppe) => (
+                                    <div key={gruppe.id} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <div className="flex items-center space-x-2">
+                                                <span className="font-bold text-lg text-gray-800">Gruppe</span>
+                                                <input type="text" value={gruppe.name} onChange={(e) => vm.setGruppen(vm.gruppen.map(g => g.id === gruppe.id ? {...g, name: e.target.value} : g))} className="font-bold text-lg w-12 border-b border-transparent focus:border-blue-500 focus:bg-gray-50 outline-none" />
+                                            </div>
+                                            <button onClick={() => vm.setGruppen(vm.gruppen.filter(g => g.id !== gruppe.id))} className="text-red-500"><i className="fa-solid fa-trash"></i></button>
                                         </div>
-                                        <button onClick={() => vm.setGruppen(vm.gruppen.filter(g => g.id !== gruppe.id))} className="text-red-500 hover:text-red-700"><i className="fa-solid fa-trash"></i></button>
-                                    </div>
-                                    <div className="space-y-2 mb-4">
-                                        {gruppe.mitglieder.map(mitglied => {
-                                            const isNeu = vm.neueMessdiener.includes(mitglied);
-                                            return (
-                                                <div key={mitglied} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-md border border-gray-100 shadow-sm">
-                                                    <span className="text-sm font-medium text-gray-800">{mitglied}</span>
-                                                    <div className="flex items-center space-x-3">
-                                                        <button onClick={() => vm.toggleNeu(mitglied)} className={isNeu ? "text-yellow-500" : "text-gray-300 hover:text-yellow-500 transition"}><i className={`fa-star ${isNeu ? 'fa-solid' : 'fa-regular'}`}></i></button>
-                                                        <button onClick={() => vm.removeMitglied(gruppe.id, mitglied)} className="text-gray-400 hover:text-red-500 transition"><i className="fa-solid fa-circle-xmark"></i></button>
+                                        <div className="space-y-2 mb-4 max-h-48 overflow-y-auto pr-1">
+                                            {gruppe.mitglieder.map(mitglied => {
+                                                const isNeu = vm.neueMessdiener.includes(mitglied);
+                                                return (
+                                                    <div key={mitglied} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-md border border-gray-100 shadow-sm">
+                                                        <span className="text-sm font-medium text-gray-800">{mitglied}</span>
+                                                        <div className="flex items-center space-x-3">
+                                                            <button onClick={() => vm.toggleNeu(mitglied)} className={isNeu ? "text-yellow-500" : "text-gray-300"}><i className={`fa-star ${isNeu ? 'fa-solid' : 'fa-regular'}`}></i></button>
+                                                            <button onClick={() => vm.removeMitglied(gruppe.id, mitglied)} className="text-gray-400 hover:text-red-500"><i className="fa-solid fa-circle-xmark"></i></button>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            )
-                                        })}
+                                                )
+                                            })}
+                                        </div>
+                                        <div className="flex items-center space-x-2">
+                                            <input type="text" placeholder="Neuer Name" value={neuerNameInputs[gruppe.id] || ""} onChange={e => setNeuerNameInputs({...neuerNameInputs, [gruppe.id]: e.target.value})} onKeyDown={e => e.key === 'Enter' && handleAdd(gruppe.id)} className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm outline-none focus:border-blue-500" />
+                                            <button onClick={() => handleAdd(gruppe.id)} className="text-green-500"><i className="fa-solid fa-circle-plus text-2xl"></i></button>
+                                        </div>
                                     </div>
-                                    <div className="flex items-center space-x-2">
-                                        <input type="text" placeholder="Neuer Name" value={neuerNameInputs[gruppe.id] || ""} onChange={e => setNeuerNameInputs({...neuerNameInputs, [gruppe.id]: e.target.value})} onKeyDown={e => e.key === 'Enter' && handleAdd(gruppe.id)} className="flex-1 border border-gray-300 rounded-md px-3 py-1.5 text-sm outline-none focus:border-blue-500" />
-                                        <button onClick={() => handleAdd(gruppe.id)} className="text-green-500 hover:text-green-600 transition"><i className="fa-solid fa-circle-plus text-xl"></i></button>
-                                    </div>
-                                </div>
-                            ))}
+                                ))}
+                            </div>
                         </div>
                     </div>
                 </div>
             );
         }
 
-        function DienstKarte({ dienst, isAssignedPhase, onEdit }) {
+        // --- PLANER ---
+        function DienstKarte({ dienst, isAssignedPhase }) {
             return (
-                <div onClick={onEdit} className="bg-white rounded-2xl p-6 shadow-[0_4px_15px_rgba(0,0,0,0.04)] border border-gray-100 cursor-pointer hover:shadow-md transition">
-                    <div className="flex justify-between items-start mb-3">
+                <div className="bg-white rounded-2xl p-5 shadow-[0_4px_15px_rgba(0,0,0,0.04)] border border-gray-100">
+                    <div className="flex justify-between items-start mb-2">
                         <div>
-                            <p className="text-blue-500 font-bold text-sm">{dienst.wochentag}, {dienst.datum}</p>
-                            <p className="text-3xl font-black tracking-tight mt-1 text-gray-800">{dienst.uhrzeit}</p>
+                            <p className="text-blue-500 font-bold text-xs md:text-sm">{dienst.wochentag}, {dienst.datum}</p>
+                            <p className="text-2xl md:text-3xl font-black tracking-tight mt-1 text-gray-800">{dienst.uhrzeit}</p>
                         </div>
-                        <i className="fa-solid fa-pen-circle text-gray-300 text-xl hover:text-blue-500 transition"></i>
                     </div>
-                    <p className="text-gray-500 font-medium line-clamp-2">{dienst.anlass}</p>
-                    <hr className="my-4 border-gray-100" />
+                    <p className="text-gray-500 font-medium text-sm md:text-base line-clamp-2">{dienst.anlass}</p>
+                    <hr className="my-3 border-gray-100" />
                     {isAssignedPhase ? (
-                        <div className="space-y-2 min-h-[40px]">
+                        <div className="space-y-1 md:space-y-2 min-h-[30px]">
                             {dienst.manuellerText ? <p className="text-red-500 font-medium text-sm">{dienst.manuellerText}</p> : dienst.manuellerBedarf ? <p className="text-red-500 font-medium text-sm">Es werden {dienst.manuellerBedarf} Minis benötigt.</p> : dienst.minis.length === 0 ? <p className="text-red-500 font-bold">-</p> : dienst.minis.map(m => (
-                                <div key={m} className="flex items-center space-x-2"><i className="fa-solid fa-user text-gray-400 text-xs"></i><span className="font-semibold text-gray-800">{m}</span></div>
+                                <div key={m} className="flex items-center space-x-2"><i className="fa-solid fa-user text-gray-400 text-xs"></i><span className="font-semibold text-gray-800 text-sm md:text-base">{m}</span></div>
                             ))}
                         </div>
-                    ) : <p className="text-gray-400 text-sm italic">Wird nach Einteilen festgelegt</p>}
+                    ) : <p className="text-gray-400 text-xs md:text-sm italic">Wird festgelegt</p>}
                 </div>
             );
         }
@@ -861,29 +608,25 @@
             const bloecke = vm.getChronologischeBloecke();
 
             const UploadPhase = () => (
-                <div className="flex flex-col h-full items-start justify-center">
-                    <h2 className="text-3xl font-bold text-gray-900">1. Pfarrbrief hochladen</h2>
-                    <p className="text-gray-500 text-lg mt-2 mb-8">Lade den aktuellen Pfarrbrief als PDF hoch, um Termine automatisch zu erkennen.</p>
-                    <label className={`w-full h-80 border-4 border-dashed rounded-3xl flex flex-col items-center justify-center cursor-pointer transition ${vm.pdfFile ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50 hover:bg-gray-100'}`}>
-                        <i className={`fa-solid ${vm.pdfFile ? 'fa-file-circle-check text-blue-500' : 'fa-file-pdf text-gray-400'} text-6xl mb-4`}></i>
-                        <span className={`text-xl font-bold ${vm.pdfFile ? 'text-blue-600' : 'text-gray-500'}`}>{vm.pdfFile ? vm.pdfFile.name : 'Klicken oder PDF hierher ziehen'}</span>
+                <div className="flex flex-col h-full justify-center">
+                    <h2 className="text-2xl md:text-3xl font-bold text-gray-900">1. Pfarrbrief hochladen</h2>
+                    <p className="text-gray-500 text-sm md:text-lg mt-2 mb-6">Lade den aktuellen Pfarrbrief als PDF hoch.</p>
+                    <label className={`w-full h-64 md:h-80 border-4 border-dashed rounded-3xl flex flex-col items-center justify-center cursor-pointer transition ${vm.pdfFile ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50 hover:bg-gray-100'}`}>
+                        <i className={`fa-solid ${vm.pdfFile ? 'fa-file-circle-check text-blue-500' : 'fa-file-pdf text-gray-400'} text-5xl md:text-6xl mb-4`}></i>
+                        <span className={`text-lg md:text-xl font-bold text-center px-4 ${vm.pdfFile ? 'text-blue-600' : 'text-gray-500'}`}>{vm.pdfFile ? vm.pdfFile.name : 'PDF Datei hierher ziehen'}</span>
                         <input type="file" accept="application/pdf" className="hidden" onChange={e => vm.setPdfFile(e.target.files[0])} />
                     </label>
-                    <button onClick={vm.leseGottesdienste} disabled={vm.laedt || !vm.pdfFile} className="mt-8 w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-lg font-bold py-4 rounded-xl shadow-lg transition flex justify-center items-center">
+                    <button onClick={vm.leseGottesdienste} disabled={vm.laedt || !vm.pdfFile} className="mt-6 w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-lg font-bold py-4 rounded-xl shadow-lg transition flex justify-center items-center">
                         {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-3"></i> : <i className="fa-solid fa-wand-magic-sparkles mr-3"></i>}{vm.laedt ? vm.ladeStatusText : 'Gottesdienste extrahieren'}
                     </button>
-                    {vm.fehlerMeldung && <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-lg border border-red-200 w-full font-medium"><i className="fa-solid fa-triangle-exclamation mr-2"></i>{vm.fehlerMeldung}</div>}
                 </div>
             );
 
             const ReviewPhase = () => (
-                <div className="flex flex-col h-full">
-                    <h2 className="text-3xl font-bold text-gray-900">Gottesdienste Abgleichen</h2>
-                    <p className="text-gray-500 mt-2 mb-6">Prüfe die erkannten Termine rechts.</p>
-                    <div className="flex-1 bg-gray-100 rounded-2xl border border-gray-300 flex items-center justify-center overflow-hidden">
-                        {vm.pdfFile ? <iframe src={URL.createObjectURL(vm.pdfFile)} className="w-full h-full border-0" title="PDF Vorschau" /> : <p className="text-gray-400">Keine PDF-Vorschau verfügbar</p>}
-                    </div>
-                    <button onClick={vm.teileEin} disabled={vm.laedt} className="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold py-4 rounded-xl shadow-lg transition flex justify-center items-center">
+                <div className="flex flex-col h-full justify-center">
+                    <h2 className="text-2xl md:text-3xl font-bold text-gray-900">2. Abgleichen</h2>
+                    <p className="text-gray-500 text-sm md:text-base mt-2 mb-6">Prüfe die erkannten Termine.</p>
+                    <button onClick={vm.teileEin} disabled={vm.laedt} className="w-full bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold py-4 rounded-xl shadow-lg transition flex justify-center items-center">
                         {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-3"></i> : <i className="fa-solid fa-users mr-3"></i>}{vm.laedt ? vm.ladeStatusText : 'Jetzt Einteilen'}
                     </button>
                     <button onClick={vm.resetApp} className="mt-3 w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">Neuen Plan starten</button>
@@ -891,17 +634,9 @@
             );
 
             const AssignedPhase = () => (
-                <div className="flex flex-col h-full">
-                    <h2 className="text-3xl font-bold text-gray-900 mb-6">Gruppen Übersicht</h2>
-                    <div className="flex-1 overflow-y-auto space-y-4 pr-2">
-                        {vm.gruppen.map(g => (
-                            <div key={g.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
-                                <div className="flex items-center space-x-2 mb-2"><i className="fa-solid fa-tag text-orange-500"></i><h3 className="font-bold text-lg">Gruppe {g.name}</h3></div>
-                                <p className="text-gray-500 leading-relaxed">{g.mitglieder.join(', ')}</p>
-                            </div>
-                        ))}
-                    </div>
-                    <button onClick={vm.exportierePDF} className="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold py-4 rounded-xl shadow-lg transition">
+                <div className="flex flex-col h-full justify-center">
+                    <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-6">Fertig!</h2>
+                    <button onClick={vm.exportierePDF} className="w-full bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold py-4 rounded-xl shadow-lg transition">
                         <i className="fa-solid fa-print mr-3"></i>Als PDF exportieren
                     </button>
                     <button onClick={vm.resetApp} className="mt-3 w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">Neuen Plan starten</button>
@@ -909,32 +644,33 @@
             );
 
             return (
-                <div className="flex h-full w-full">
-                    <div className="w-[450px] bg-white p-10 border-r border-gray-200 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-10 flex flex-col">
+                <div className="flex flex-col md:flex-row h-full w-full">
+                    <MobileTopBar title="Planer" />
+                    
+                    <div className="w-full md:w-[400px] lg:w-[450px] bg-white p-6 md:p-10 border-b md:border-b-0 md:border-r border-gray-200 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-10 flex flex-col shrink-0">
                         {vm.appState === 'upload' && <UploadPhase/>}
                         {vm.appState === 'review' && <ReviewPhase/>}
                         {vm.appState === 'assigned' && <AssignedPhase/>}
                     </div>
-                    <div className="flex-1 bg-gray-50/50 p-10 overflow-y-auto relative">
+                    
+                    <div className="flex-1 bg-gray-50/50 p-4 md:p-10 overflow-y-auto relative">
                         {vm.laedt && vm.appState !== 'upload' && <div className="absolute inset-0 z-50 bg-white/60 backdrop-blur-sm flex items-center justify-center"><i className="fa-solid fa-circle-notch fa-spin text-4xl text-blue-500"></i></div>}
                         {vm.dienste.length === 0 && !vm.laedt ? (
-                            <div className="h-full flex flex-col justify-center items-center text-gray-400"><i className="fa-solid fa-inbox text-7xl mb-4 opacity-50"></i><p className="text-xl font-medium">Hier erscheinen die Termine nach dem Extrahieren.</p></div>
+                            <div className="h-full flex flex-col justify-center items-center text-gray-400 py-20"><i className="fa-solid fa-inbox text-5xl md:text-7xl mb-4 opacity-50"></i><p className="text-lg md:text-xl font-medium text-center">Hier erscheinen die Termine.</p></div>
                         ) : (
-                            <div className="max-w-6xl mx-auto">
-                                <div className="flex justify-between items-center mb-10">
-                                    <h1 className="text-4xl font-extrabold text-gray-900">Gottesdienste</h1>
-                                </div>
+                            <div className="max-w-6xl mx-auto pb-20">
+                                <h1 className="text-2xl md:text-4xl font-extrabold text-gray-900 mb-6 md:mb-10 hidden md:block">Gottesdienste</h1>
                                 {bloecke.map((block, idx) => (
-                                    <div key={idx} className="mb-12">
-                                        <div className="flex items-center space-x-3 mb-6">
-                                            <select className="bg-transparent text-2xl font-bold text-gray-900 focus:ring-0 cursor-pointer outline-none" value={block.gruppe} onChange={() => {}}>
+                                    <div key={idx} className="mb-8 md:mb-12">
+                                        <div className="flex items-center space-x-2 mb-4 md:mb-6">
+                                            <select className="bg-transparent text-xl md:text-2xl font-bold text-gray-900 focus:ring-0 cursor-pointer outline-none" value={block.gruppe} onChange={() => {}}>
                                                 <option value="Ohne Gruppe">Nicht zugeordnet</option>
                                                 {vm.gruppen.map(g => <option key={g.name} value={g.name}>Gruppe {g.name}</option>)}
                                             </select>
-                                            <span className="text-2xl font-bold text-gray-900">: Kalenderwoche</span>
+                                            <span className="text-xl md:text-2xl font-bold text-gray-900">: Woche {block.id.split('-')[1]}</span>
                                         </div>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                                            {block.dienste.map(dienst => <DienstKarte key={dienst.id} dienst={dienst} isAssignedPhase={vm.appState === 'assigned'} onEdit={() => {}} />)}
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+                                            {block.dienste.map(dienst => <DienstKarte key={dienst.id} dienst={dienst} isAssignedPhase={vm.appState === 'assigned'} />)}
                                         </div>
                                     </div>
                                 ))}
@@ -945,36 +681,35 @@
             );
         }
 
-        // --- STATISTIK VIEW ---
+        // --- STATISTIK ---
         function StatistikView() {
             const vm = useViewModel();
             const orderedNames = Object.keys(vm.statistik).sort((a, b) => vm.statistik[b] - vm.statistik[a]);
 
             return (
-                <div className="h-full overflow-y-auto p-10 bg-gray-50/50">
-                    <div className="max-w-4xl">
-                        <div className="flex justify-between items-end mb-8">
-                            <div><h1 className="text-3xl font-bold text-gray-900">Einsatz-Statistik</h1><p className="text-gray-500 text-lg mt-1">Übersicht aller Einsätze für eine faire Verteilung.</p></div>
-                            <div className="flex space-x-3">
-                                <button className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition" onClick={vm.fetchStatistikFromFirebase}><i className="fa-solid fa-cloud-arrow-down mr-2"></i>Aus Cloud laden</button>
-                                <button className="bg-white border border-gray-300 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition" onClick={() => { if(confirm("Alle Zähler auf 0 setzen? Die Personen bleiben erhalten.")) { let neu = {}; vm.gruppen.forEach(g => g.mitglieder.forEach(m => neu[m] = 0)); vm.setStatistik(neu); } }}><i className="fa-solid fa-arrow-rotate-left mr-2"></i>Zähler nullen</button>
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Statistik" />
+                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
+                        <div className="max-w-4xl mx-auto md:mx-0">
+                            <div className="hidden md:flex justify-between items-end mb-8">
+                                <div><h1 className="text-3xl font-bold text-gray-900">Einsatz-Statistik</h1></div>
+                                <button className="bg-white border border-gray-300 hover:bg-red-50 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition" onClick={() => { if(confirm("Alle Zähler nullen?")) { let neu = {}; vm.gruppen.forEach(g => g.mitglieder.forEach(m => neu[m] = 0)); vm.setStatistik(neu); } }}><i className="fa-solid fa-arrow-rotate-left mr-2"></i>Nullen</button>
                             </div>
-                        </div>
-                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-10">
-                            <div className="flex justify-between items-center px-10 py-4 border-b border-gray-100 bg-gray-50"><span className="font-semibold text-gray-500 uppercase tracking-wider text-sm">Messdiener</span><span className="font-semibold text-gray-500 uppercase tracking-wider text-sm">Einsätze</span></div>
-                            <div className="divide-y divide-gray-100">
-                                {orderedNames.map((name, idx) => (
-                                    <div key={name} className={`flex justify-between items-center px-10 py-4 ${idx % 2 === 0 ? 'bg-blue-50/20' : 'bg-white'}`}>
-                                        <span className="font-semibold text-gray-800 text-lg">{name}</span>
-                                        <div className="flex items-center space-x-6">
-                                            <span className="text-2xl font-bold text-gray-900 w-8 text-right font-mono">{vm.statistik[name]}</span>
-                                            <div className="flex space-x-2">
-                                                <button onClick={() => vm.setStatistik({...vm.statistik, [name]: Math.max(0, vm.statistik[name] - 1)})} className="text-red-500 hover:text-red-600 text-2xl transition"><i className="fa-solid fa-circle-minus"></i></button>
-                                                <button onClick={() => vm.setStatistik({...vm.statistik, [name]: vm.statistik[name] + 1})} className="text-green-500 hover:text-green-600 text-2xl transition"><i className="fa-solid fa-circle-plus"></i></button>
+                            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-10">
+                                <div className="divide-y divide-gray-100">
+                                    {orderedNames.map((name, idx) => (
+                                        <div key={name} className={`flex justify-between items-center px-4 md:px-10 py-3 md:py-4 ${idx % 2 === 0 ? 'bg-blue-50/20' : 'bg-white'}`}>
+                                            <span className="font-semibold text-gray-800 md:text-lg">{name}</span>
+                                            <div className="flex items-center space-x-4 md:space-x-6">
+                                                <span className="text-xl md:text-2xl font-bold text-gray-900 w-6 md:w-8 text-right font-mono">{vm.statistik[name]}</span>
+                                                <div className="flex space-x-2">
+                                                    <button onClick={() => vm.setStatistik({...vm.statistik, [name]: Math.max(0, vm.statistik[name] - 1)})} className="text-red-500 text-xl md:text-2xl"><i className="fa-solid fa-circle-minus"></i></button>
+                                                    <button onClick={() => vm.setStatistik({...vm.statistik, [name]: vm.statistik[name] + 1})} className="text-green-500 text-xl md:text-2xl"><i className="fa-solid fa-circle-plus"></i></button>
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -982,338 +717,244 @@
             );
         }
 
-        // --- NOTIZEN VIEW ---
+        // --- NOTIZEN ---
         function NotizenView() {
             const vm = useViewModel();
             const addNote = () => vm.setNotizen([{ id: crypto.randomUUID(), titel: "Neue Notiz", inhalt: "" }, ...vm.notizen]);
             return (
-                <div className="h-full overflow-y-auto p-10 bg-gray-50/50">
-                    <div className="max-w-6xl">
-                        <div className="flex justify-between items-end mb-8">
-                            <div><h1 className="text-3xl font-bold text-gray-900">Notizen</h1><p className="text-gray-500 text-lg mt-1">Dein persönlicher Merkzettel für den Messdienerplan.</p></div>
-                            <button onClick={addNote} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition"><i className="fa-solid fa-plus mr-2"></i>Notiz hinzufügen</button>
-                        </div>
-                        {vm.notizen.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center h-64 text-gray-400"><i className="fa-regular fa-note-sticky text-6xl mb-4 opacity-50"></i><p className="text-lg">Keine Notizen vorhanden.</p></div>
-                        ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 pb-10">
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Notizen" />
+                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
+                        <div className="max-w-6xl mx-auto md:mx-0">
+                            <div className="hidden md:flex justify-between items-end mb-8">
+                                <div><h1 className="text-3xl font-bold text-gray-900">Notizen</h1></div>
+                                <button onClick={addNote} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition"><i className="fa-solid fa-plus mr-2"></i>Notiz hinzufügen</button>
+                            </div>
+                            <div className="md:hidden mb-6"><button onClick={addNote} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6 pb-10">
                                 {vm.notizen.map(note => (
-                                    <div key={note.id} className="bg-yellow-100/60 rounded-2xl border border-yellow-200 p-6 shadow-sm relative group hover:shadow-md transition duration-200">
+                                    <div key={note.id} className="bg-yellow-100/80 rounded-2xl border border-yellow-300 p-5 shadow-sm">
                                         <div className="flex justify-between items-center mb-3">
-                                            <input type="text" value={note.titel} onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, titel: e.target.value} : n))} className="font-bold text-xl bg-transparent border-none focus:ring-0 w-full text-gray-800 outline-none placeholder-gray-400" placeholder="Titel..." />
-                                            <button onClick={() => vm.setNotizen(vm.notizen.filter(n => n.id !== note.id))} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition duration-200"><i className="fa-solid fa-trash"></i></button>
+                                            <input type="text" value={note.titel} onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, titel: e.target.value} : n))} className="font-bold text-lg bg-transparent border-none w-full text-gray-800 outline-none" placeholder="Titel..." />
+                                            <button onClick={() => vm.setNotizen(vm.notizen.filter(n => n.id !== note.id))} className="text-red-500/70 hover:text-red-600 ml-2"><i className="fa-solid fa-trash"></i></button>
                                         </div>
-                                        <hr className="border-yellow-300 mb-4" />
-                                        <textarea value={note.inhalt} onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, inhalt: e.target.value} : n))} placeholder="Hier Notizen eintragen..." className="w-full h-48 bg-transparent border-none resize-none focus:ring-0 text-gray-700 outline-none text-base leading-relaxed"></textarea>
+                                        <textarea value={note.inhalt} onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, inhalt: e.target.value} : n))} placeholder="Hier Notizen eintragen..." className="w-full h-32 md:h-48 bg-transparent border-none resize-none outline-none text-gray-700 text-sm md:text-base"></textarea>
                                     </div>
                                 ))}
                             </div>
-                        )}
+                        </div>
                     </div>
                 </div>
             );
         }
 
-        // --- WERKZEUGE VIEW ---
+        // --- WERKZEUGE ---
         function WerkzeugeView() {
             const vm = useViewModel();
-            const [kopiert, setKopiert] = useState(false);
-            const [kiLoading, setKiLoading] = useState(false);
-            
-            const handleCopy = () => {
-                const alle = vm.gruppen.flatMap(g => g.mitglieder).sort().join("\n");
-                navigator.clipboard.writeText(alle);
-                setKopiert(true); setTimeout(() => setKopiert(false), 2000);
-            };
-
-            const handleKiImport = async () => {
-                if(!vm.apiKey) { alert("Bitte erst den Gemini API Key in den Einstellungen hinterlegen!"); return; }
-                try {
-                    const text = await navigator.clipboard.readText();
-                    if(!text) { alert("Zwischenablage ist leer!"); return; }
-                    if(confirm("Deine aktuellen Gruppen werden durch die Daten aus der Zwischenablage ersetzt. Statistik bleibt erhalten. Fortfahren?")) {
-                        setKiLoading(true);
-                        
-                        const promptText = `Du bist ein Daten-Extraktor. Lies den folgenden Text und erstelle daraus Gruppen von Messdienern. TEXT: ${text}
-                        REGELN: 1. Finde alle Gruppen-Namen. 2. Ordne die Vor- und Nachnamen der Gruppe zu. 3. Ignoriere unnötige Informationen. Extrahiere NUR "Vorname Nachname".`;
-                        
-                        const response = await fetch(`[https://generativelanguage.googleapis.com/v1beta/models/$](https://generativelanguage.googleapis.com/v1beta/models/$){vm.geminiModel}:generateContent?key=${vm.apiKey}`, {
-                            method: "POST", headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                                contents: [{ parts: [{ text: promptText }] }],
-                                generationConfig: {
-                                    responseMimeType: "application/json",
-                                    responseSchema: {
-                                        type: "ARRAY", items: { type: "OBJECT", properties: { name: { type: "STRING" }, mitglieder: { type: "ARRAY", items: { type: "STRING" } } }, required: ["name", "mitglieder"] }
-                                    }
-                                }
-                            })
-                        });
-                        const json = await response.json();
-                        let cleanJsonString = json.candidates[0].content.parts[0].text.replace(/^```json/, '').replace(/^```/, '').replace(/```$/, '').trim();
-                        const importierteGruppen = JSON.parse(cleanJsonString);
-                        
-                        const neueGruppen = importierteGruppen.map(g => ({ id: crypto.randomUUID(), name: g.name, mitglieder: g.mitglieder }));
-                        vm.setGruppen(neueGruppen);
-                        
-                        let newStat = {...vm.statistik};
-                        neueGruppen.forEach(g => g.mitglieder.forEach(m => { if(newStat[m] === undefined) newStat[m] = 0; }));
-                        vm.setStatistik(newStat);
-                        alert("Gruppen erfolgreich per KI importiert!");
-                    }
-                } catch(e) { alert("Fehler beim KI Import: " + e.message); } finally { setKiLoading(false); }
-            };
-
-            const ToolBox = ({ icon, title, desc, btnText, btnIcon, onClick, colorClass, btnClass, loading }) => (
-                <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm mb-6 flex flex-col justify-between">
-                    <div>
-                        <div className="flex items-center space-x-3 mb-2"><i className={`${icon} ${colorClass} text-2xl w-8 text-center`}></i><h2 className="text-xl font-bold text-gray-800">{title}</h2></div>
-                        <p className="text-gray-500 mb-5 ml-11">{desc}</p>
-                    </div>
-                    <div className="ml-11">
-                        <button onClick={onClick} disabled={loading} className={`${btnClass} px-4 py-2 rounded-lg text-sm font-bold shadow-sm transition flex items-center disabled:opacity-50`}>
-                            {loading ? <i className="fa-solid fa-circle-notch fa-spin mr-2"></i> : <i className={`${btnIcon} mr-2`}></i>}{loading ? "Verarbeite..." : btnText}
-                        </button>
-                    </div>
+            const ToolBox = ({ icon, title, desc, btnText, onClick, colorClass, btnClass }) => (
+                <div className="bg-white rounded-xl border border-gray-200 p-5 md:p-6 shadow-sm mb-4 md:mb-6">
+                    <div className="flex items-center space-x-3 mb-2"><i className={`${icon} ${colorClass} text-2xl w-8 text-center`}></i><h2 className="text-lg md:text-xl font-bold text-gray-800">{title}</h2></div>
+                    <p className="text-sm md:text-base text-gray-500 mb-5 ml-11">{desc}</p>
+                    <div className="ml-11"><button onClick={onClick} className={`${btnClass} px-4 py-2 rounded-lg text-sm font-bold shadow-sm w-full md:w-auto`}>{btnText}</button></div>
                 </div>
             );
-
             return (
-                <div className="h-full overflow-y-auto p-10 bg-gray-50/50">
-                    <div className="max-w-3xl">
-                        <div className="mb-8"><h1 className="text-3xl font-bold text-gray-900">Werkzeuge</h1><p className="text-gray-500 text-lg mt-1">Nützliche Tools für den Messdiener-Alltag.</p></div>
-                        <hr className="mb-8 border-gray-200" />
-                        <ToolBox icon="fa-solid fa-copy" colorClass="text-blue-500" title="Alle Messdiener als Text kopieren" desc="Kopiert alle angelegten Messdiener (ohne Gruppen-Zuordnung) als einfache Textliste in die Zwischenablage." btnText={kopiert ? "Erfolgreich kopiert!" : "Namen kopieren"} btnIcon={kopiert ? "fa-solid fa-check" : "fa-solid fa-clipboard"} onClick={handleCopy} btnClass={kopiert ? "bg-green-500 hover:bg-green-600 text-white" : "bg-blue-600 hover:bg-blue-700 text-white"} />
-                        <ToolBox icon="fa-solid fa-file-pdf" colorClass="text-orange-500" title="Gruppen-Liste als PDF exportieren" desc="Erstellt ein druckfertiges PDF mit allen angelegten Gruppen und den zugeordneten Messdienern." btnText="PDF herunterladen" btnIcon="fa-solid fa-download" onClick={vm.exportiereGruppenPDF} btnClass="bg-orange-500 hover:bg-orange-600 text-white" />
-                        <ToolBox icon="fa-solid fa-wand-magic-sparkles" colorClass="text-purple-500" title="Gruppen per KI aus Zwischenablage importieren" desc="Kopiere einen Text mit Gruppen und Namen in deine Zwischenablage. Die KI liest ihn aus und überschreibt deine aktuellen Gruppen." btnText="Aus Zwischenablage importieren" btnIcon="fa-solid fa-paste" onClick={handleKiImport} loading={kiLoading} btnClass="bg-purple-600 hover:bg-purple-700 text-white" />
-                    </div>
-                </div>
-            );
-        }
-
-        // --- VORMERKEN VIEW ---
-        function VormerkungEditOverlay({ vormerkung, alleMinis, onSave, onCancel }) {
-            const [localV, setLocalV] = useState(vormerkung);
-            const addMini = () => setLocalV({...localV, minis: [...localV.minis, ""]});
-            const updateMini = (idx, val) => { let nm = [...localV.minis]; nm[idx] = val; setLocalV({...localV, minis: nm}); };
-            const removeMini = (idx) => { let nm = [...localV.minis]; nm.splice(idx, 1); setLocalV({...localV, minis: nm}); };
-
-            return (
-                <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center">
-                    <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-xl w-full">
-                        <h2 className="text-2xl font-bold mb-6 text-gray-900"><i className="fa-solid fa-calendar-check text-purple-500 mr-3"></i>Vormerkung bearbeiten</h2>
-                        <div className="space-y-4 mb-8">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div><label className="block text-sm text-gray-500 mb-1">Datum</label><input type="text" value={localV.datum} onChange={e=>setLocalV({...localV, datum: e.target.value})} placeholder="DD.MM.YYYY" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div>
-                                <div><label className="block text-sm text-gray-500 mb-1">Wochentag</label><input type="text" value={localV.wochentag} onChange={e=>setLocalV({...localV, wochentag: e.target.value})} placeholder="z.B. Sonntag" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div><label className="block text-sm text-gray-500 mb-1">Uhrzeit</label><input type="text" value={localV.uhrzeit} onChange={e=>setLocalV({...localV, uhrzeit: e.target.value})} placeholder="Optional (z.B. 09.30)" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div>
-                                <div><label className="block text-sm text-gray-500 mb-1">Anlass</label><input type="text" value={localV.anlass} onChange={e=>setLocalV({...localV, anlass: e.target.value})} placeholder="z.B. Firmung" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div>
-                            </div>
-                            <hr className="my-4 border-gray-200" />
-                            <h3 className="font-bold text-gray-800">Eingeteilte Personen</h3>
-                            {localV.minis.map((m, i) => (
-                                <div key={i} className="flex space-x-2">
-                                    <input type="text" value={m} onChange={e => updateMini(i, e.target.value)} placeholder="Name..." className="flex-1 border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/>
-                                    <button onClick={() => removeMini(i)} className="text-red-500 hover:text-red-700 px-3"><i className="fa-solid fa-trash"></i></button>
-                                </div>
-                            ))}
-                            {localV.minis.length < 8 && <button onClick={addMini} className="text-purple-600 font-bold text-sm"><i className="fa-solid fa-plus mr-1"></i>Person hinzufügen</button>}
-                        </div>
-                        <div className="flex justify-end space-x-4">
-                            <button onClick={onCancel} className="px-5 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition">Abbrechen</button>
-                            <button onClick={() => {
-                                let finalV = {...localV};
-                                finalV.minis = finalV.minis.filter(m => m.trim() !== "");
-                                onSave(finalV);
-                            }} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-md transition">Speichern</button>
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Werkzeuge" />
+                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
+                        <div className="max-w-3xl mx-auto md:mx-0">
+                            <div className="hidden md:block mb-8"><h1 className="text-3xl font-bold text-gray-900">Werkzeuge</h1></div>
+                            <ToolBox icon="fa-solid fa-file-pdf" colorClass="text-orange-500" title="Gruppen-Liste (PDF)" desc="Erstellt ein druckfertiges PDF mit allen angelegten Gruppen." btnText="PDF herunterladen" onClick={vm.exportiereGruppenPDF} btnClass="bg-orange-500 text-white" />
                         </div>
                     </div>
                 </div>
             );
         }
 
+        // --- VORMERKEN ---
         function VormerkenView() {
             const vm = useViewModel();
-            const [editVormerk, setEditVormerk] = useState(null);
             const wochentage = [{id: 2, n: 'Mo'}, {id: 3, n: 'Di'}, {id: 4, n: 'Mi'}, {id: 5, n: 'Do'}, {id: 6, n: 'Fr'}, {id: 7, n: 'Sa'}, {id: 1, n: 'So'}];
-            const alleMinis = vm.gruppen.flatMap(g => g.mitglieder).sort();
-
-            const sortedVormerkungen = [...vm.vormerkungen].sort((a, b) => {
-                const d1 = vm.parseDateStr(a.datum) || new Date(0);
-                const d2 = vm.parseDateStr(b.datum) || new Date(0);
-                return d1 - d2;
-            });
+            const sortedVormerkungen = [...vm.vormerkungen].sort((a, b) => (vm.parseDateStr(a.datum)||0) - (vm.parseDateStr(b.datum)||0));
 
             return (
-                <div className="h-full overflow-y-auto p-10 bg-gray-50/50">
-                    <div className="max-w-5xl">
-                        <div className="flex justify-between items-end mb-8">
-                            <div><h1 className="text-3xl font-bold text-gray-900">Vorgemerkte Messdiener</h1><p className="text-gray-500 text-lg mt-1">Plane Messdiener im Vorfeld für spezielle Gottesdienste ein.</p></div>
-                            <button className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition"
-                                onClick={() => setEditVormerk({id: crypto.randomUUID(), datum: "", wochentag: "Sonntag", uhrzeit: "", anlass: "", minis: []})}>
-                                <i className="fa-solid fa-plus mr-2"></i>Vormerkung hinzufügen
-                            </button>
-                        </div>
-                        
-                        {vm.vormerkungen.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center p-12 text-center text-gray-400 bg-white rounded-xl border border-gray-200 border-dashed mb-10"><i className="fa-regular fa-calendar-check text-6xl mb-4 opacity-50"></i><h3 className="text-xl font-bold text-gray-600">Keine Vormerkungen vorhanden.</h3><p className="mt-2 max-w-md">Sobald du hier Gottesdienste anlegst, werden die eingetragenen Personen beim Berechnen des Plans automatisch fest eingeteilt.</p></div>
-                        ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mb-10">
-                                {sortedVormerkungen.map(v => (
-                                    <div key={v.id} onClick={() => setEditVormerk(v)} className="bg-white p-6 rounded-2xl border border-purple-200 shadow-sm cursor-pointer hover:shadow-md transition">
-                                        <div className="flex justify-between items-start mb-3">
-                                            <div><p className="text-purple-600 font-bold text-sm">{v.wochentag}, {v.datum}</p><p className="text-2xl font-black text-gray-900 mt-1">{v.uhrzeit || 'Variabel'}</p></div>
-                                            <button onClick={(e) => { e.stopPropagation(); vm.setVormerkungen(vm.vormerkungen.filter(x => x.id !== v.id)); }} className="text-gray-300 hover:text-red-500 transition"><i className="fa-solid fa-trash"></i></button>
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Vormerken" />
+                    <div className="flex-1 overflow-y-auto p-4 md:p-10 bg-gray-50/50">
+                        <div className="max-w-5xl mx-auto md:mx-0 pb-12">
+                            <div className="hidden md:flex justify-between items-end mb-8">
+                                <div><h1 className="text-3xl font-bold text-gray-900">Vorgemerkte Messdiener</h1></div>
+                            </div>
+                            
+                            {sortedVormerkungen.length === 0 ? (
+                                <div className="text-center p-8 bg-white border border-dashed border-gray-300 rounded-xl mb-8"><p className="text-gray-500">Keine speziellen Gottesdienste vorgemerkt. (Nutze das Pfarrbüro-Portal dafür!)</p></div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 mb-10">
+                                    {sortedVormerkungen.map(v => (
+                                        <div key={v.id} className="bg-white p-5 rounded-2xl border border-purple-200 shadow-sm relative">
+                                            <button onClick={() => vm.setVormerkungen(vm.vormerkungen.filter(x => x.id !== v.id))} className="absolute top-4 right-4 text-gray-300 hover:text-red-500"><i className="fa-solid fa-trash"></i></button>
+                                            <p className="text-purple-600 font-bold text-xs">{v.wochentag}, {v.datum}</p>
+                                            <p className="text-xl font-black text-gray-900 mt-1">{v.uhrzeit || 'Variabel'}</p>
+                                            <p className="text-gray-500 text-sm font-medium mb-3 truncate">{v.anlass}</p>
+                                            <div className="space-y-1">
+                                                {v.minis.map(m => <div key={m} className="flex items-center space-x-2"><i className="fa-solid fa-thumbtack text-purple-400 text-xs"></i><span className="text-sm font-semibold">{m}</span></div>)}
+                                            </div>
                                         </div>
-                                        <p className="text-gray-500 font-medium mb-4 truncate">{v.anlass}</p>
-                                        <hr className="border-gray-100 mb-3"/>
-                                        {v.minis.length === 0 ? <p className="text-gray-400 italic text-sm">Keine Personen</p> : v.minis.map(m => <div key={m} className="flex items-center space-x-2 mb-1"><i className="fa-solid fa-thumbtack text-purple-400 text-xs"></i><span className="font-semibold text-gray-800">{m}</span></div>)}
+                                    ))}
+                                </div>
+                            )}
+
+                            <div className="flex justify-between items-end mb-4 md:mb-6 mt-8">
+                                <h2 className="text-xl md:text-2xl font-bold text-gray-900">Wöchentliche Abwesenheiten</h2>
+                                <button onClick={() => vm.setRegelmaessigeAbwesenheiten([...vm.regelmaessigeAbwesenheiten, { id: crypto.randomUUID(), name: '', wochentage: [] }])} className="bg-white border border-gray-300 px-3 py-1 md:px-4 md:py-2 rounded-lg text-sm font-medium"><i className="fa-solid fa-plus md:mr-2"></i><span className="hidden md:inline">Person</span></button>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                                {vm.regelmaessigeAbwesenheiten.map(regel => (
+                                    <div key={regel.id} className="bg-white rounded-xl border border-gray-200 p-4 md:p-6 shadow-sm">
+                                        <div className="flex justify-between items-center mb-4 md:mb-6">
+                                            <AutocompleteField value={regel.name} onChange={val => vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.map(r => r.id === regel.id ? {...r, name: val} : r))} suggestions={vm.alleMinis} placeholder="Name..." className="font-bold text-lg border-b border-gray-300 focus:border-blue-500 outline-none w-2/3 bg-transparent pb-1" />
+                                            <button onClick={() => vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.filter(r => r.id !== regel.id))} className="text-red-400"><i className="fa-solid fa-trash"></i></button>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            {wochentage.map(tag => {
+                                                const isActive = regel.wochentage.includes(tag.id);
+                                                return (
+                                                    <button key={tag.id} onClick={() => { const n = isActive ? regel.wochentage.filter(t=>t!==tag.id) : [...regel.wochentage, tag.id]; vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.map(r => r.id === regel.id ? {...r, wochentage: n} : r)); }} className={`w-8 h-8 md:w-10 md:h-10 rounded-lg font-bold text-xs md:text-sm transition-all ${isActive ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-500'}`}>{tag.n}</button>
+                                                );
+                                            })}
+                                        </div>
                                     </div>
                                 ))}
                             </div>
-                        )}
-
-                        <hr className="my-10 border-gray-200" />
-                        <div className="flex justify-between items-end mb-6"><div><h2 className="text-2xl font-bold text-gray-900">Wöchentliche Abwesenheiten</h2><p className="text-gray-500 mt-1">Personen, die an bestimmten Wochentagen nie können.</p></div><button onClick={() => vm.setRegelmaessigeAbwesenheiten([...vm.regelmaessigeAbwesenheiten, { id: crypto.randomUUID(), name: '', wochentage: [] }])} className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition"><i className="fa-solid fa-plus mr-2"></i>Person hinzufügen</button></div>
-
-                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 pb-10">
-                            {vm.regelmaessigeAbwesenheiten.map(regel => (
-                                <div key={regel.id} className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-                                    <div className="flex justify-between items-center mb-6">
-                                        <input type="text" placeholder="Name der Person..." value={regel.name} onChange={e => vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.map(r => r.id === regel.id ? {...r, name: e.target.value} : r))} className="font-bold text-lg border-b border-gray-300 focus:border-blue-500 outline-none w-2/3 bg-transparent pb-1" />
-                                        <button onClick={() => vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.filter(r => r.id !== regel.id))} className="text-gray-400 hover:text-red-500 transition"><i className="fa-solid fa-trash"></i></button>
-                                    </div>
-                                    <div className="flex justify-between space-x-1">
-                                        {wochentage.map(tag => {
-                                            const isActive = regel.wochentage.includes(tag.id);
-                                            return (
-                                                <button key={tag.id} onClick={() => { const newTage = isActive ? regel.wochentage.filter(t => t !== tag.id) : [...regel.wochentage, tag.id]; vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.map(r => r.id === regel.id ? {...r, wochentage: newTage} : r)); }} className={`w-10 h-10 rounded-lg font-bold text-sm transition-all duration-200 shadow-sm ${isActive ? 'bg-orange-500 text-white scale-105' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{tag.n}</button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            ))}
                         </div>
                     </div>
-                    {editVormerk && <VormerkungEditOverlay vormerkung={editVormerk} alleMinis={alleMinis} onCancel={() => setEditVormerk(null)} onSave={(v) => {
-                        const exists = vm.vormerkungen.find(x => x.id === v.id);
-                        if(exists) vm.setVormerkungen(vm.vormerkungen.map(x => x.id === v.id ? v : x));
-                        else vm.setVormerkungen([...vm.vormerkungen, v]);
-                        setEditVormerk(null);
-                    }}/>}
                 </div>
             );
         }
 
-        // --- PROZESSIONEN VIEW ---
-        function DropSlot({ title, value, onDrop }) {
-            const handleDragOver = (e) => e.preventDefault();
-            const handleDrop = (e) => { e.preventDefault(); onDrop(e.dataTransfer.getData("text")); };
+        // --- PROZESSIONEN VIEW (Bidirektionales Drag & Drop) ---
+        function DropSlot({ title, value, onDrop, onRemove }) {
             return (
-                <div onDragOver={handleDragOver} onDrop={handleDrop} className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-3 text-center min-h-[60px] flex flex-col items-center justify-center">
-                    <span className="text-xs text-gray-500 font-bold uppercase mb-1">{title}</span>
-                    <span className="font-bold text-gray-800">{value || "-"}</span>
+                <div onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); onDrop(e.dataTransfer.getData("text")); }} className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-2 md:p-3 text-center min-h-[60px] flex flex-col items-center justify-center relative">
+                    <span className="text-[10px] md:text-xs text-gray-500 font-bold uppercase mb-1">{title}</span>
+                    {value ? (
+                        <div draggable onDragStart={e => e.dataTransfer.setData("text", value)} className="bg-blue-100 text-blue-800 px-2 py-1 md:px-3 md:py-1 rounded-md text-sm md:text-base font-bold cursor-grab flex items-center gap-2">
+                            <span>{value}</span>
+                            <i className="fa-solid fa-xmark cursor-pointer text-blue-400 hover:text-blue-600" onClick={(e) => { e.stopPropagation(); onRemove(); }}></i>
+                        </div>
+                    ) : <span className="font-bold text-gray-300">-</span>}
                 </div>
             );
         }
 
         function DraggableMini({ name }) {
-            return (
-                <div draggable onDragStart={(e) => e.dataTransfer.setData("text", name)} className="bg-white border border-gray-200 shadow-sm rounded-md px-3 py-2 text-sm font-semibold cursor-grab active:cursor-grabbing hover:border-blue-400 transition">
-                    {name}
-                </div>
-            );
+            return <div draggable onDragStart={(e) => e.dataTransfer.setData("text", name)} className="bg-white border border-gray-200 shadow-sm rounded-md px-3 py-2 text-sm font-semibold cursor-grab active:cursor-grabbing hover:border-blue-400 transition">{name}</div>;
         }
 
         function ProzessionenView() {
             const vm = useViewModel();
             const [selectedId, setSelectedId] = useState(null);
-            const alleMinis = vm.gruppen.flatMap(g => g.mitglieder).sort();
-
-            const sortedProzessionen = [...vm.prozessionen].sort((a, b) => {
-                const d1 = vm.parseDateStr(a.datum) || new Date(0);
-                const d2 = vm.parseDateStr(b.datum) || new Date(0);
-                return d1 - d2;
-            });
+            const sorted = [...vm.prozessionen].sort((a, b) => (vm.parseDateStr(a.datum)||0) - (vm.parseDateStr(b.datum)||0));
 
             return (
-                <div className="flex h-full w-full">
-                    <div className="w-[300px] bg-white border-r border-gray-200 flex flex-col h-full shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-10">
+                <div className="flex flex-col md:flex-row h-full w-full">
+                    <MobileTopBar title="Prozessionen" />
+                    
+                    <div className="hidden md:flex w-[300px] bg-white border-r border-gray-200 flex-col h-full z-10 shrink-0">
                         <div className="p-6">
                             <h2 className="text-2xl font-bold text-gray-900 mb-4">Prozessionen</h2>
-                            <button onClick={() => {
-                                const newId = crypto.randomUUID();
-                                vm.setProzessionen([{id: newId, titel: "Neue Prozession", datum: "", gabenbereitung: ["",""], kollekte: ["",""], flambeaux: ["",""], weihrauch: "", schiffchen: "", kreuz: "", fahneGruenWeiss: ["",""], fahneGelbWeiss1: ["",""], kinderfahnen: ["",""], laternen: ["",""], fahneRotWeiss2: ["",""], hiddenMinis: []}, ...vm.prozessionen]);
-                                setSelectedId(newId);
-                            }} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium py-2 rounded-lg transition border border-gray-300">
-                                <i className="fa-solid fa-plus mr-2"></i>Neu erstellen
-                            </button>
+                            <button onClick={() => { const nId = crypto.randomUUID(); vm.setProzessionen([{id: nId, titel: "Neue Prozession", datum: "", gabenbereitung: ["",""], kollekte: ["",""], flambeaux: ["",""], weihrauch: "", schiffchen: "", kreuz: "", fahneGruenWeiss: ["",""], fahneGelbWeiss1: ["",""], kinderfahnen: ["",""], laternen: ["",""], fahneRotWeiss2: ["",""], hiddenMinis: []}, ...vm.prozessionen]); setSelectedId(nId); }} className="w-full bg-gray-100 font-medium py-2 rounded-lg border border-gray-300"><i className="fa-solid fa-plus mr-2"></i>Neu</button>
                         </div>
                         <div className="flex-1 overflow-y-auto px-3 space-y-1">
-                            {sortedProzessionen.map(proz => (
-                                <button key={proz.id} onClick={() => setSelectedId(proz.id)} className={`w-full text-left px-4 py-3 rounded-lg transition ${selectedId === proz.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}>
-                                    <div className="font-bold truncate">{proz.titel}</div>
-                                    <div className={`text-sm ${selectedId === proz.id ? 'text-blue-200' : 'text-gray-500'}`}>{proz.datum || 'Kein Datum'}</div>
+                            {sorted.map(p => (
+                                <button key={p.id} onClick={() => setSelectedId(p.id)} className={`w-full text-left px-4 py-3 rounded-lg ${selectedId === p.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}>
+                                    <div className="font-bold truncate">{p.titel}</div>
+                                    <div className="text-sm opacity-80">{p.datum || 'Kein Datum'}</div>
                                 </button>
                             ))}
                         </div>
                     </div>
 
-                    <div className="flex-1 bg-gray-50/50 p-10 overflow-y-auto flex space-x-8">
+                    <div className="flex-1 bg-gray-50/50 p-4 md:p-10 overflow-y-auto flex flex-col md:flex-row md:space-x-8">
                         {!selectedId ? (
-                            <div className="w-full h-full flex flex-col justify-center items-center text-gray-400"><i className="fa-solid fa-arrow-pointer text-7xl mb-4 opacity-50"></i><p className="text-xl font-medium">Wähle links eine Prozession aus</p></div>
+                            <div className="w-full h-full flex flex-col justify-center items-center text-gray-400"><i className="fa-solid fa-arrow-pointer text-5xl md:text-7xl mb-4 opacity-50"></i><p className="text-lg md:text-xl">Wähle oder erstelle eine Prozession</p></div>
                         ) : (
-                            vm.prozessionen.filter(p => p.id === selectedId).map(proz => (
-                                <React.Fragment key={proz.id}>
-                                    {/* Sidebar für Drag & Drop Namen */}
-                                    <div className="w-64 flex flex-col">
-                                        <h3 className="font-bold text-gray-700 mb-4">Verfügbare Personen</h3>
-                                        <div className="flex-1 overflow-y-auto space-y-2 pr-2">
-                                            {alleMinis.map(m => <DraggableMini key={m} name={m} />)}
-                                        </div>
-                                    </div>
-                                    {/* Editor Area */}
-                                    <div className="flex-1 bg-white rounded-2xl border border-gray-200 p-8 shadow-sm">
-                                        <div className="flex justify-between items-start mb-10">
-                                            <div>
-                                                <input type="text" value={proz.titel} onChange={e => vm.setProzessionen(vm.prozessionen.map(pr => pr.id === proz.id ? {...pr, titel: e.target.value} : pr))} className="text-4xl font-black text-gray-900 border-none outline-none focus:ring-0 p-0 mb-2 w-full bg-transparent" placeholder="Titel..." />
-                                                <input type="text" value={proz.datum} onChange={e => vm.setProzessionen(vm.prozessionen.map(pr => pr.id === proz.id ? {...pr, datum: e.target.value} : pr))} className="text-xl font-bold text-blue-600 border-none outline-none focus:ring-0 p-0 bg-transparent" placeholder="DD.MM.YYYY" />
-                                            </div>
-                                            <button onClick={() => { vm.setProzessionen(vm.prozessionen.filter(p => p.id !== proz.id)); setSelectedId(null); }} className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-lg font-bold transition">
-                                                <i className="fa-solid fa-trash"></i>
-                                            </button>
-                                        </div>
+                            vm.prozessionen.filter(p => p.id === selectedId).map(proz => {
+                                const update = (field, val) => vm.setProzessionen(vm.prozessionen.map(pr => pr.id === proz.id ? {...pr, [field]: val} : pr));
+                                const assigned = [...proz.gabenbereitung, ...proz.kollekte, ...proz.flambeaux, proz.weihrauch, proz.schiffchen, proz.kreuz, ...proz.fahneGruenWeiss, ...proz.fahneGelbWeiss1, ...proz.kinderfahnen, ...proz.laternen, ...proz.fahneRotWeiss2].filter(x => x);
+                                const available = vm.alleMinis.filter(m => !assigned.includes(m));
 
-                                        <div className="bg-gray-100 p-6 rounded-xl space-y-6">
-                                            <h3 className="text-center font-black text-2xl text-gray-800 uppercase tracking-widest mb-6">Aufstellung</h3>
+                                return (
+                                    <React.Fragment key={proz.id}>
+                                        <div className="w-full md:w-64 flex flex-col shrink-0 mb-6 md:mb-0">
+                                            <h3 className="font-bold text-gray-700 mb-2">Verfügbare Personen</h3>
+                                            <div className="flex md:flex-col gap-2 overflow-x-auto md:overflow-y-auto pb-2 md:pr-2">
+                                                {available.map(m => <DraggableMini key={m} name={m} />)}
+                                            </div>
+                                        </div>
+                                        <div className="flex-1 bg-white rounded-2xl border border-gray-200 p-4 md:p-8 shadow-sm">
+                                            <div className="flex justify-between items-start mb-8">
+                                                <div>
+                                                    <input type="text" value={proz.titel} onChange={e => update('titel', e.target.value)} className="text-2xl md:text-4xl font-black text-gray-900 border-none outline-none focus:ring-0 p-0 mb-1 w-full bg-transparent" placeholder="Titel..." />
+                                                    <input type="text" value={proz.datum} onChange={e => update('datum', e.target.value)} className="text-lg md:text-xl font-bold text-blue-600 border-none outline-none focus:ring-0 p-0 bg-transparent" placeholder="DD.MM.YYYY" />
+                                                </div>
+                                                <button onClick={() => { vm.setProzessionen(vm.prozessionen.filter(p => p.id !== proz.id)); setSelectedId(null); }} className="text-red-500 p-2"><i className="fa-solid fa-trash text-xl"></i></button>
+                                            </div>
                                             
-                                            <div className="flex justify-center"><div className="w-1/2"><DropSlot title="Kreuz" value={proz.kreuz} onDrop={v => vm.setProzessionen(vm.prozessionen.map(pr=>pr.id===proz.id?{...pr, kreuz: v}:pr))} /></div></div>
-                                            
-                                            <div className="flex space-x-4">
-                                                <div className="flex-1"><DropSlot title="Fahne (Grün/Weiß) 1" value={proz.fahneGruenWeiss[0]} onDrop={v => vm.setProzessionen(vm.prozessionen.map(pr=>pr.id===proz.id?{...pr, fahneGruenWeiss: [v, pr.fahneGruenWeiss[1]]}:pr))} /></div>
-                                                <div className="flex-1"><DropSlot title="Fahne (Grün/Weiß) 2" value={proz.fahneGruenWeiss[1]} onDrop={v => vm.setProzessionen(vm.prozessionen.map(pr=>pr.id===proz.id?{...pr, fahneGruenWeiss: [pr.fahneGruenWeiss[0], v]}:pr))} /></div>
+                                            <div className="bg-gray-100 p-4 md:p-6 rounded-xl space-y-4 md:space-y-6">
+                                                <div className="flex justify-center"><div className="w-full md:w-1/2"><DropSlot title="Kreuz" value={proz.kreuz} onDrop={v => update('kreuz', v)} onRemove={() => update('kreuz', '')} /></div></div>
+                                                <div className="flex space-x-2 md:space-x-4">
+                                                    <div className="flex-1"><DropSlot title="Fahne (Grün) 1" value={proz.fahneGruenWeiss[0]} onDrop={v => update('fahneGruenWeiss', [v, proz.fahneGruenWeiss[1]])} onRemove={() => update('fahneGruenWeiss', ['', proz.fahneGruenWeiss[1]])} /></div>
+                                                    <div className="flex-1"><DropSlot title="Fahne (Grün) 2" value={proz.fahneGruenWeiss[1]} onDrop={v => update('fahneGruenWeiss', [proz.fahneGruenWeiss[0], v])} onRemove={() => update('fahneGruenWeiss', [proz.fahneGruenWeiss[0], ''])} /></div>
+                                                </div>
+                                                <div className="flex space-x-2 md:space-x-4">
+                                                    <div className="flex-1"><DropSlot title="Flambeaux 1" value={proz.flambeaux[0]} onDrop={v => update('flambeaux', [v, proz.flambeaux[1]])} onRemove={() => update('flambeaux', ['', proz.flambeaux[1]])} /></div>
+                                                    <div className="flex-1"><DropSlot title="Flambeaux 2" value={proz.flambeaux[1]} onDrop={v => update('flambeaux', [proz.flambeaux[0], v])} onRemove={() => update('flambeaux', [proz.flambeaux[0], ''])} /></div>
+                                                </div>
+                                                <div className="flex space-x-2 md:space-x-4">
+                                                    <div className="flex-1"><DropSlot title="Weihrauch" value={proz.weihrauch} onDrop={v => update('weihrauch', v)} onRemove={() => update('weihrauch', '')} /></div>
+                                                    <div className="flex-1"><DropSlot title="Schiffchen" value={proz.schiffchen} onDrop={v => update('schiffchen', v)} onRemove={() => update('schiffchen', '')} /></div>
+                                                </div>
                                             </div>
-
-                                            <div className="text-center text-sm font-bold text-gray-400 tracking-widest my-4">— Männer —</div>
-
-                                            <div className="flex space-x-4">
-                                                <div className="flex-1"><DropSlot title="Fahne (Gelb/Weiß) 1" value={proz.fahneGelbWeiss1[0]} onDrop={v => vm.setProzessionen(vm.prozessionen.map(pr=>pr.id===proz.id?{...pr, fahneGelbWeiss1: [v, pr.fahneGelbWeiss1[1]]}:pr))} /></div>
-                                                <div className="flex-1"><DropSlot title="Fahne (Gelb/Weiß) 2" value={proz.fahneGelbWeiss1[1]} onDrop={v => vm.setProzessionen(vm.prozessionen.map(pr=>pr.id===proz.id?{...pr, fahneGelbWeiss1: [pr.fahneGelbWeiss1[0], v]}:pr))} /></div>
-                                            </div>
-
-                                            <div className="text-center text-sm font-bold text-gray-400 tracking-widest my-4">— Musikverein —</div>
-
-                                            <div className="flex space-x-4">
-                                                <div className="flex-1"><DropSlot title="Flambeaux 1" value={proz.flambeaux[0]} onDrop={v => vm.setProzessionen(vm.prozessionen.map(pr=>pr.id===proz.id?{...pr, flambeaux: [v, pr.flambeaux[1]]}:pr))} /></div>
-                                                <div className="flex-1"><DropSlot title="Flambeaux 2" value={proz.flambeaux[1]} onDrop={v => vm.setProzessionen(vm.prozessionen.map(pr=>pr.id===proz.id?{...pr, flambeaux: [pr.flambeaux[0], v]}:pr))} /></div>
-                                            </div>
-
-                                            <div className="flex justify-center"><div className="w-1/2"><DropSlot title="Weihrauch" value={proz.weihrauch} onDrop={v => vm.setProzessionen(vm.prozessionen.map(pr=>pr.id===proz.id?{...pr, weihrauch: v}:pr))} /></div></div>
                                         </div>
+                                    </React.Fragment>
+                                );
+                            })
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // --- EVENTS VIEW ---
+        function EventsView() {
+            const vm = useViewModel();
+            const [selectedId, setSelectedId] = useState(null);
+            const sorted = [...vm.events].sort((a, b) => (vm.parseDateStr(a.datum)||0) - (vm.parseDateStr(b.datum)||0));
+            return (
+                <div className="flex flex-col md:flex-row h-full w-full">
+                    <MobileTopBar title="Events" />
+                    <div className="hidden md:flex w-[300px] bg-white border-r border-gray-200 flex-col h-full z-10 shrink-0">
+                        <div className="p-6"><h2 className="text-2xl font-bold text-gray-900 mb-4">Events</h2><button onClick={() => { const nId = crypto.randomUUID(); vm.setEvents([{id: nId, titel: "Neues Event", datum: "", beschreibung: ""}, ...vm.events]); setSelectedId(nId); }} className="w-full bg-gray-100 font-medium py-2 rounded-lg border border-gray-300"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
+                        <div className="flex-1 overflow-y-auto px-3 space-y-1">
+                            {sorted.map(e => <button key={e.id} onClick={() => setSelectedId(e.id)} className={`w-full text-left px-4 py-3 rounded-lg ${selectedId === e.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}><div className="font-bold truncate">{e.titel}</div><div className="text-sm opacity-80">{e.datum}</div></button>)}
+                        </div>
+                    </div>
+                    <div className="flex-1 bg-gray-50/50 p-4 md:p-10 overflow-y-auto">
+                        {!selectedId ? (
+                            <div className="w-full h-full flex flex-col justify-center items-center text-gray-400"><i className="fa-solid fa-champagne-glasses text-5xl md:text-7xl mb-4 opacity-50"></i><p className="text-lg md:text-xl">Wähle ein Event aus</p></div>
+                        ) : (
+                            vm.events.filter(e => e.id === selectedId).map(ev => (
+                                <div key={ev.id} className="max-w-4xl bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm">
+                                    <div className="flex justify-between items-start mb-6">
+                                        <div className="w-full">
+                                            <input type="text" value={ev.titel} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, titel: e.target.value} : x))} className="text-2xl md:text-4xl font-black text-gray-900 w-full bg-transparent outline-none mb-2" placeholder="Titel..." />
+                                            <input type="text" value={ev.datum} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, datum: e.target.value} : x))} className="text-lg md:text-xl font-bold text-blue-600 w-full bg-transparent outline-none" placeholder="Datum..." />
+                                        </div>
+                                        <button onClick={() => { vm.setEvents(vm.events.filter(x => x.id !== ev.id)); setSelectedId(null); }} className="text-red-500 p-2"><i className="fa-solid fa-trash text-xl"></i></button>
                                     </div>
-                                </React.Fragment>
+                                    <textarea value={ev.beschreibung} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, beschreibung: e.target.value} : x))} className="w-full h-48 bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-700 outline-none focus:border-blue-500" placeholder="Beschreibung..."></textarea>
+                                </div>
                             ))
                         )}
                     </div>
@@ -1321,73 +962,95 @@
             );
         }
 
-        function EventsView() {
+        // ==========================================
+        // MARK: - APP ROUTER (Desktop & Mobile Admin Dashboard)
+        // ==========================================
+
+        function AdminDashboard() {
             const vm = useViewModel();
-            const [selectedEventId, setSelectedEventId] = useState(null);
-            const sortedEvents = [...vm.events].sort((a, b) => { const d1 = vm.parseDateStr(a.datum) || new Date(0); const d2 = vm.parseDateStr(b.datum) || new Date(0); return d1 - d2; });
+            const tiles = [
+                { id: 'planer', label: 'Planer', icon: 'fa-regular fa-file-lines', color: 'bg-blue-500' },
+                { id: 'prozessionen', label: 'Prozessionen', icon: 'fa-solid fa-person-walking', color: 'bg-purple-500' },
+                { id: 'events', label: 'Events', icon: 'fa-solid fa-champagne-glasses', color: 'bg-pink-500' },
+                { id: 'vormerken', label: 'Vormerken', icon: 'fa-regular fa-calendar-check', color: 'bg-green-500' },
+                { id: 'statistik', label: 'Statistik', icon: 'fa-solid fa-chart-column', color: 'bg-orange-500' },
+                { id: 'notizen', label: 'Notizen', icon: 'fa-regular fa-note-sticky', color: 'bg-yellow-500' },
+                { id: 'messdiener', label: 'Gruppen', icon: 'fa-solid fa-user-group', color: 'bg-indigo-500' },
+                { id: 'einstellungen', label: 'Optionen', icon: 'fa-solid fa-gear', color: 'bg-gray-500' },
+                { id: 'werkzeuge', label: 'Tools', icon: 'fa-solid fa-screwdriver-wrench', color: 'bg-teal-500' }
+            ];
 
             return (
-                <div className="flex h-full w-full">
-                    <div className="w-[300px] bg-white border-r border-gray-200 flex flex-col h-full shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-10">
-                        <div className="p-6"><h2 className="text-2xl font-bold text-gray-900 mb-4">Events</h2><button onClick={() => { const newId = crypto.randomUUID(); vm.setEvents([{id: newId, titel: "Neues Event", datum: "01.01.2026", beschreibung: "Details hier eintragen...", isICal: false, ablauf: [], teilnehmer: []}, ...vm.events]); setSelectedEventId(newId); }} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium py-2 rounded-lg transition border border-gray-300"><i className="fa-solid fa-plus mr-2"></i>Event erstellen</button></div>
-                        <div className="flex-1 overflow-y-auto px-3 space-y-1">
-                            {sortedEvents.map(event => (
-                                <button key={event.id} onClick={() => setSelectedEventId(event.id)} className={`w-full text-left px-4 py-3 rounded-lg transition ${selectedEventId === event.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}><div className="flex justify-between items-center"><span className="font-bold truncate">{event.titel}</span>{event.isICal && <i className="fa-solid fa-cloud text-xs"></i>}</div><span className={`text-sm ${selectedEventId === event.id ? 'text-blue-200' : 'text-gray-500'}`}>{event.datum}</span></button>
-                            ))}
-                        </div>
+                <div className="min-h-screen bg-[#f2f2f7] p-6 pb-12 flex flex-col antialiased">
+                    <div className="flex justify-between items-end mb-8 pt-8">
+                        <h1 className="text-4xl font-black text-gray-900 tracking-tight">Übersicht</h1>
+                        <button onClick={() => vm.setRoute('landing')} className="bg-white px-4 py-2 rounded-full shadow-sm text-sm font-bold text-red-500 border border-gray-200"><i className="fa-solid fa-power-off mr-2"></i>Abmelden</button>
                     </div>
-                    <div className="flex-1 bg-gray-50/50 p-10 overflow-y-auto">
-                        {!selectedEventId ? (
-                            <div className="h-full flex flex-col justify-center items-center text-gray-400"><i className="fa-solid fa-arrow-pointer text-7xl mb-4 opacity-50"></i><p className="text-xl font-medium">Wähle links ein Event aus</p></div>
-                        ) : (
-                            <div className="max-w-4xl bg-white rounded-2xl border border-gray-200 p-8 shadow-sm">
-                                {vm.events.filter(e => e.id === selectedEventId).map(event => (
-                                    <div key={event.id}>
-                                        <div className="flex justify-between items-start mb-6"><div><input type="text" value={event.titel} onChange={e => vm.setEvents(vm.events.map(ev => ev.id === event.id ? {...ev, titel: e.target.value} : ev))} className="text-4xl font-black text-gray-900 border-none outline-none focus:ring-0 p-0 mb-2 w-full bg-transparent" /><input type="text" value={event.datum} onChange={e => vm.setEvents(vm.events.map(ev => ev.id === event.id ? {...ev, datum: e.target.value} : ev))} className="text-xl font-bold text-blue-600 border-none outline-none focus:ring-0 p-0 bg-transparent" /></div><button onClick={() => { vm.setEvents(vm.events.filter(e => e.id !== event.id)); setSelectedEventId(null); }} className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-lg font-bold transition"><i className="fa-solid fa-trash mr-2"></i>Löschen</button></div>
-                                        <textarea value={event.beschreibung} onChange={e => vm.setEvents(vm.events.map(ev => ev.id === event.id ? {...ev, beschreibung: e.target.value} : ev))} className="w-full h-32 bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-700 outline-none focus:border-blue-500 mb-8" placeholder="Event Beschreibung..."></textarea>
-                                    </div>
-                                ))}
+                    <div className="grid grid-cols-2 gap-4">
+                        {tiles.map(t => (
+                            <div key={t.id} onClick={() => vm.setActiveTab(t.id)} className="ios-card p-6 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform">
+                                <div className={`w-14 h-14 ${t.color} text-white rounded-full flex items-center justify-center text-2xl mb-3 shadow-md`}>
+                                    <i className={t.icon}></i>
+                                </div>
+                                <span className="font-bold text-gray-800 text-[15px]">{t.label}</span>
                             </div>
-                        )}
+                        ))}
                     </div>
                 </div>
             );
         }
 
-        // --- MAIN APP COMPONENT ---
-        function App() {
-            const { activeTab, isAppLoading, apiKey } = useViewModel();
+        function AdminApp() {
+            const vm = useViewModel();
+            const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
-            if (isAppLoading) {
+            useEffect(() => {
+                const handleResize = () => setIsMobile(window.innerWidth < 768);
+                window.addEventListener('resize', handleResize);
+                return () => window.removeEventListener('resize', handleResize);
+            }, []);
+
+            // Mobile Logik
+            if (isMobile && (!vm.activeTab || vm.activeTab === 'menu')) {
+                return <AdminDashboard />;
+            }
+
+            return (
+                <div className="flex h-screen w-full bg-macBg text-[#1d1d1f] antialiased">
+                    {!isMobile && <Sidebar/>}
+                    <div className="flex-1 flex flex-col bg-white overflow-hidden shadow-[-4px_0_15px_rgba(0,0,0,0.05)] z-10 relative">
+                        {vm.activeTab === 'planer' && <PlanerView/>}
+                        {vm.activeTab === 'prozessionen' && <ProzessionenView/>}
+                        {vm.activeTab === 'events' && <EventsView/>}
+                        {vm.activeTab === 'vormerken' && <VormerkenView/>}
+                        {vm.activeTab === 'statistik' && <StatistikView/>}
+                        {vm.activeTab === 'notizen' && <NotizenView/>}
+                        {vm.activeTab === 'werkzeuge' && <WerkzeugeView/>}
+                        {vm.activeTab === 'messdiener' && <MessdienerView/>}
+                        {vm.activeTab === 'einstellungen' && <EinstellungenView/>}
+                    </div>
+                </div>
+            );
+        }
+
+        function App() {
+            const vm = useViewModel();
+
+            if (vm.isAppLoading) {
                 return (
                     <div className="flex h-screen w-full items-center justify-center bg-white flex-col space-y-6">
                         <i className="fa-solid fa-cloud text-blue-500 text-7xl animate-bounce"></i>
-                        <div className="text-center">
-                            <h2 className="text-3xl font-bold text-gray-800 mb-2">Lade Arbeitsbereich...</h2>
-                            <p className="text-gray-500 text-lg">Initialisiere App-Daten und UI</p>
-                        </div>
+                        <h2 className="text-3xl font-bold text-gray-800 mb-2">Lade Daten...</h2>
                     </div>
                 );
             }
 
-            if (!apiKey) return <LoginOverlay />;
-
-            return (
-                <div className="flex h-screen w-full bg-macBg text-[#1d1d1f] antialiased">
-                    <Sidebar/>
-                    <div className="flex-1 flex flex-col bg-white overflow-hidden shadow-[-4px_0_15px_rgba(0,0,0,0.05)] z-10 relative">
-                        {(!activeTab || activeTab === 'planer') && <PlanerView/>}
-                        {activeTab === 'prozessionen' && <ProzessionenView/>}
-                        {activeTab === 'events' && <EventsView/>}
-                        {activeTab === 'vormerken' && <VormerkenView/>}
-                        {activeTab === 'statistik' && <StatistikView/>}
-                        {activeTab === 'notizen' && <NotizenView/>}
-                        {activeTab === 'werkzeuge' && <WerkzeugeView/>}
-                        {activeTab === 'messdiener' && <MessdienerView/>}
-                        {activeTab === 'einstellungen' && <EinstellungenView/>}
-                    </div>
-                </div>
-            );
+            // Neues Haupt-Routing
+            if (vm.route === 'landing') return <LandingPage />;
+            if (vm.route === 'pfarrbuero') return <PfarrbueroView />;
+            if (vm.route === 'admin') return <AdminApp />;
+            
+            return <LandingPage />;
         }
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
