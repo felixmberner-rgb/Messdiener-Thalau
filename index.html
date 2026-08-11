@@ -25,17 +25,17 @@
         }
     </script>
 
-    <!-- Icons -->
+    <!-- Icons (als Ersatz für SF Symbols) -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     
-    <!-- Babel -->
+    <!-- Babel (Übersetzt den JSX/React Code im Browser) -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- jsPDF für PDF Export -->
+    <!-- jsPDF für späteren PDF Export -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
     <style>
@@ -45,17 +45,22 @@
             background-color: #ececec; 
             -webkit-font-smoothing: antialiased;
         }
+        /* Mac-ähnliche Scrollbars */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.3); }
+        
+        /* Outline bei Fokus entfernen für Mac-Look */
         input:focus, select:focus, textarea:focus, button:focus { outline: none; }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
-const { useState, useEffect, createContext, useContext, useCallback } = React;
+    <!-- MARK: - React App Logic -->
+    <script type="text/babel">
+        const { useState, useEffect, createContext, useContext, useCallback } = React;
 
         // --- HILFSFUNKTIONEN (@AppStorage) ---
         function useAppStorage(key, initialValue) {
@@ -134,7 +139,6 @@ const { useState, useEffect, createContext, useContext, useCallback } = React;
             // ==========================================
             const getFbUrl = (docName) => `https://firestore.googleapis.com/v1/projects/${firebaseProjectId.trim()}/databases/(default)/documents/messdiener/${docName}`;
 
-            // 1. STATISTIK
             const fetchStatistikFromFirebase = async () => {
                 if (!firebaseProjectId.trim()) return;
                 try {
@@ -170,7 +174,6 @@ const { useState, useEffect, createContext, useContext, useCallback } = React;
                 } catch (e) { setFehlerMeldung("Firebase Sync Fehler: " + e.message); }
             };
 
-            // 2. GRUPPEN & NEUE
             const fetchGruppenFromFirebase = async () => {
                 if (!firebaseProjectId.trim()) return;
                 try {
@@ -194,7 +197,6 @@ const { useState, useEffect, createContext, useContext, useCallback } = React;
                 await fetch(getFbUrl('gruppen'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             };
 
-            // 3. REGELN
             const fetchRegelnFromFirebase = async () => {
                 if (!firebaseProjectId.trim()) return;
                 try {
@@ -218,7 +220,6 @@ const { useState, useEffect, createContext, useContext, useCallback } = React;
                 await fetch(getFbUrl('regeln'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             };
 
-            // 4. VORMERKUNGEN
             const fetchVormerkungenFromFirebase = async () => {
                 if (!firebaseProjectId.trim()) return;
                 try {
@@ -236,7 +237,6 @@ const { useState, useEffect, createContext, useContext, useCallback } = React;
                 await fetch(getFbUrl('vormerkungen'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             };
 
-            // 5. EVENTS
             const fetchEventsFromFirebase = async () => {
                 if (!firebaseProjectId.trim()) return;
                 try {
@@ -260,7 +260,6 @@ const { useState, useEffect, createContext, useContext, useCallback } = React;
                 await fetch(getFbUrl('events'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             };
 
-            // 6. PROZESSIONEN
             const fetchProzessionenFromFirebase = async () => {
                 if (!firebaseProjectId.trim()) return;
                 try {
@@ -278,14 +277,12 @@ const { useState, useEffect, createContext, useContext, useCallback } = React;
                 await fetch(getFbUrl('prozessionen'), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             };
 
-            // Auto-Sync Hooks (Debounced)
             useEffect(() => { const t = setTimeout(() => syncGruppenToFirebase(), 1000); return () => clearTimeout(t); }, [gruppen, neueMessdiener]);
             useEffect(() => { const t = setTimeout(() => syncRegelnToFirebase(), 1000); return () => clearTimeout(t); }, [immerZusammen, nieZusammen]);
             useEffect(() => { const t = setTimeout(() => syncVormerkungenToFirebase(), 1000); return () => clearTimeout(t); }, [vormerkungen]);
             useEffect(() => { const t = setTimeout(() => syncEventsToFirebase(), 1000); return () => clearTimeout(t); }, [events, deletedEvents]);
             useEffect(() => { const t = setTimeout(() => syncProzessionenToFirebase(), 1000); return () => clearTimeout(t); }, [prozessionen]);
 
-            // Initiale Lade-Simulation & Fetch
             useEffect(() => {
                 const loadAll = async () => {
                     await fetchStatistikFromFirebase();
@@ -562,7 +559,47 @@ const { useState, useEffect, createContext, useContext, useCallback } = React;
         // ==========================================
         // MARK: - UI COMPONENTS
         // ==========================================
+
+        // --- LOGIN / PASSWORD OVERLAY ---
+        function LoginOverlay() {
+            const vm = useViewModel();
+            const [inputKey, setInputKey] = useState("");
+
+            // Wenn bereits ein API-Key vorhanden ist, wird das Overlay nicht gezeichnet
+            if (vm.apiKey) return null;
+
+            return (
+                <div className="fixed inset-0 z-[100] bg-[#ececec] flex items-center justify-center">
+                    <div className="bg-white p-10 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.1)] max-w-md w-full text-center border border-gray-200">
+                        <i className="fa-solid fa-lock text-5xl text-blue-500 mb-6"></i>
+                        <h2 className="text-2xl font-bold text-gray-900 mb-2">Anmeldung erforderlich</h2>
+                        <p className="text-gray-500 mb-8 leading-relaxed">Bitte gib das Zugangs-Passwort (API-Key) ein, um den Messdiener Planer zu öffnen.</p>
+                        
+                        <input 
+                            type="password" 
+                            placeholder="Passwort eingeben..." 
+                            className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-6 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 outline-none transition"
+                            value={inputKey}
+                            onChange={(e) => setInputKey(e.target.value)}
+                            onKeyDown={(e) => { 
+                                if (e.key === 'Enter' && inputKey.trim() !== '') {
+                                    vm.setApiKey(inputKey.trim());
+                                }
+                            }}
+                        />
+                        <button 
+                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg py-3 rounded-xl transition shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={!inputKey.trim()}
+                            onClick={() => vm.setApiKey(inputKey.trim())}
+                        >
+                            Entsperren
+                        </button>
+                    </div>
+                </div>
+            );
+        }
         
+        // --- SIDEBAR ---
         function Sidebar() {
             const { activeTab, setActiveTab } = useViewModel();
             const menuItems = [
@@ -647,8 +684,17 @@ const { useState, useEffect, createContext, useContext, useCallback } = React;
                         <SectionBox icon="fa-solid fa-brain text-purple-500" title="Künstliche Intelligenz & Datenbanken">
                             <div className="grid grid-cols-2 gap-6 mb-4">
                                 <div>
-                                    <label className="block text-sm text-gray-500 mb-1">Gemini API Key</label>
-                                    <input type="password" placeholder="API Key" className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm" value={vm.apiKey} onChange={e => vm.setApiKey(e.target.value)} />
+                                    <label className="block text-sm text-gray-500 mb-1">Passwort / API Key</label>
+                                    <input 
+                                        type="password" 
+                                        placeholder={vm.apiKey ? "Bereits hinterlegt (Zum Ändern tippen)" : "Passwort eingeben"} 
+                                        className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 outline-none" 
+                                        onChange={e => {
+                                            if (e.target.value.trim() !== '') {
+                                                vm.setApiKey(e.target.value.trim());
+                                            }
+                                        }} 
+                                    />
                                 </div>
                                 <div>
                                     <label className="block text-sm text-gray-500 mb-1">KI Modell</label>
@@ -1250,7 +1296,7 @@ const { useState, useEffect, createContext, useContext, useCallback } = React;
 
         // --- MAIN APP COMPONENT ---
         function App() {
-            const { activeTab, isAppLoading } = useViewModel();
+            const { activeTab, isAppLoading, apiKey } = useViewModel();
 
             if (isAppLoading) {
                 return (
@@ -1262,6 +1308,11 @@ const { useState, useEffect, createContext, useContext, useCallback } = React;
                         </div>
                     </div>
                 );
+            }
+
+            // Wenn noch kein Passwort (API-Key) vergeben ist, wird exklusiv das Overlay geladen
+            if (!apiKey) {
+                return <LoginOverlay />;
             }
 
             return (
