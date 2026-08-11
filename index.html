@@ -11,7 +11,6 @@
             theme: { extend: { colors: { macBg: '#ececec', macSidebar: '#f5f5f5', macActive: '#007aff', macText: '#1d1d1f' }, fontFamily: { sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'] } } }
         }
     </script>
-
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -47,53 +46,67 @@
             return [state, setState];
         }
 
+        function AutocompleteField({ value, onChange, suggestions, placeholder, className }) {
+            const [isOpen, setIsOpen] = useState(false);
+            const wrapperRef = useRef(null);
+            const filtered = suggestions.filter(s => s.toLowerCase().includes(value.toLowerCase()) && s.toLowerCase() !== value.toLowerCase());
+
+            useEffect(() => {
+                function handleClickOutside(event) { if (wrapperRef.current && !wrapperRef.current.contains(event.target)) setIsOpen(false); }
+                document.addEventListener("mousedown", handleClickOutside);
+                return () => document.removeEventListener("mousedown", handleClickOutside);
+            }, []);
+
+            return (
+                <div ref={wrapperRef} className="relative w-full">
+                    <input type="text" value={value} onChange={e => { onChange(e.target.value); setIsOpen(true); }} onFocus={() => setIsOpen(true)} placeholder={placeholder} className={className || "w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-blue-500"} />
+                    {isOpen && filtered.length > 0 && (
+                        <ul className="absolute z-50 w-full bg-white border border-gray-200 shadow-lg rounded-lg mt-1 max-h-40 overflow-y-auto">
+                            {filtered.map(s => <li key={s} onClick={() => { onChange(s); setIsOpen(false); }} className="px-4 py-2 hover:bg-blue-50 cursor-pointer text-gray-800 border-b border-gray-50 last:border-0">{s}</li>)}
+                        </ul>
+                    )}
+                </div>
+            );
+        }
+
         const ViewModelContext = createContext();
 
         function ViewModelProvider({ children }) {
-            const [route, setRoute] = useAppStorage('appRoute', 'landing'); 
+            const [route, setRoute] = useState('landing'); // Startet immer auf der Landing Page!
             const [activeTab, setActiveTab] = useState('planer'); 
             const [isAppLoading, setIsAppLoading] = useState(true);
+            const [appState, setAppState] = useAppStorage('appStateRaw', 'upload'); 
             const [laedt, setLaedt] = useState(false);
             const [ladeStatusText, setLadeStatusText] = useState("");
+            const [fehlerMeldung, setFehlerMeldung] = useState(null);
             
-            // Konfiguration & Sicherheit
             const [apiKey, setApiKey] = useAppStorage('geminiApiKey', '');
             const [adminPassword, setAdminPassword] = useAppStorage('adminPasswordLocal', ''); 
             const [cloudAdminPassword, setCloudAdminPassword] = useState(''); 
             const [geminiModel, setGeminiModel] = useAppStorage('geminiModel', 'gemini-3.6-flash');
             const [firebaseProjectId, setFirebaseProjectId] = useAppStorage('firebaseProjectId', '');
-            
-            // Intelligentes Erkennen des Links (Auto-Login für Pfarrbüro & Abwesenheiten)
-            useEffect(() => {
-                const pathParam = window.location.pathname.replace('/', '').trim();
-                if (pathParam && pathParam.length > 5) {
-                    setFirebaseProjectId(pathParam); // Setzt die Firebase ID aus dem Link
-                }
-            }, []);
-
-            // Planungs-Sperre (für neue Abwesenheiten)
             const [planGeneriertBis, setPlanGeneriertBis] = useAppStorage('planGeneriertBis', ''); 
             
             const [anzahlSonntags, setAnzahlSonntags] = useAppStorage('anzahlSonntags', 4);
             const [anzahlWerktags, setAnzahlWerktags] = useAppStorage('anzahlWerktags', 2);
             
-            // Daten-States
             const [gruppen, setGruppen] = useAppStorage('gruppenDaten', [{ id: crypto.randomUUID(), name: "A", mitglieder: [] }]);
             const [neueMessdiener, setNeueMessdiener] = useAppStorage('neueMessdienerData', []);
-            const [immerZusammen, setImmerZusammen] = useAppStorage('immerZusammenData', []);
-            const [nieZusammen, setNieZusammen] = useAppStorage('nieZusammenData', []);
             const [statistik, setStatistik] = useAppStorage('statistikDaten', {});
             const [dienste, setDienste] = useAppStorage('diensteData', []);
             const [vormerkungen, setVormerkungen] = useAppStorage('vormerkungenData', []);
             const [regelmaessigeAbwesenheiten, setRegelmaessigeAbwesenheiten] = useAppStorage('regelmaessigeAbwesenheitenData', []);
-            
-            // NEU: Echte Abwesenheiten (ersetzt Google Forms)
             const [abwesenheiten, setAbwesenheiten] = useAppStorage('abwesenheitenData', []); 
-            
             const [notizen, setNotizen] = useAppStorage('notizenData', []);
             const [events, setEvents] = useAppStorage('eventsData', []);
             const [prozessionen, setProzessionen] = useAppStorage('prozessionenData', []);
             const [pdfFile, setPdfFile] = useState(null);
+
+            // Auto-Login über URL
+            useEffect(() => {
+                const pathParam = window.location.pathname.replace('/', '').trim();
+                if (pathParam && pathParam.length > 5) setFirebaseProjectId(pathParam);
+            }, []);
 
             const getFbUrl = (docName) => `https://firestore.googleapis.com/v1/projects/${firebaseProjectId.trim()}/databases/(default)/documents/messdiener/${docName}`;
 
@@ -116,8 +129,8 @@
             };
 
             useEffect(() => {
-                if(firebaseProjectId) { fetchAllData().then(() => setIsAppLoading(false)); } 
-                else { setTimeout(() => setIsAppLoading(false), 500); }
+                if(firebaseProjectId) fetchAllData().then(() => setIsAppLoading(false)); 
+                else setTimeout(() => setIsAppLoading(false), 500); 
             }, [firebaseProjectId]);
 
             const syncDoc = async (docName, fields) => {
@@ -131,53 +144,74 @@
             useEffect(() => { const t = setTimeout(() => syncDoc('urlaubsAbwesenheiten', { dataJson: { stringValue: JSON.stringify(abwesenheiten) } }), 1000); return () => clearTimeout(t); }, [abwesenheiten]);
             useEffect(() => { const t = setTimeout(() => syncDoc('config', { planGeneriertBis: { stringValue: planGeneriertBis }, adminPassword: { stringValue: cloudAdminPassword } }), 1000); return () => clearTimeout(t); }, [planGeneriertBis, cloudAdminPassword]);
 
+            const parseDateStr = (str) => {
+                if (!str) return null; const parts = str.match(/\d+/g); if (!parts || parts.length < 2) return null;
+                return new Date(parts.length >= 3 ? parseInt(parts[2]) : new Date().getFullYear(), parseInt(parts[1]) - 1, parseInt(parts[0]));
+            };
+
+            const normalizeTime = (time) => {
+                if(!time) return ""; let clean = time.replace(/h/gi, '').replace(/uhr/gi, '').trim(); let parts = clean.split(/[:.]/);
+                if (parts.length === 2) return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.${parts[1].length === 1 ? `${parts[1]}0` : (parts[1] === "" ? "00" : parts[1])}`;
+                else if (parts.length === 1 && parts[0] !== "") return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.00`;
+                return time;
+            };
+
             const alleMinis = gruppen.flatMap(g => g.mitglieder).sort();
 
             const value = {
-                route, setRoute, activeTab, setActiveTab, isAppLoading, laedt, setLaedt, ladeStatusText, setLadeStatusText,
-                apiKey, setApiKey, adminPassword, setAdminPassword, cloudAdminPassword, setCloudAdminPassword,
-                geminiModel, setGeminiModel, firebaseProjectId, setFirebaseProjectId, planGeneriertBis, setPlanGeneriertBis,
-                anzahlSonntags, setAnzahlSonntags, anzahlWerktags, setAnzahlWerktags,
+                route, setRoute, activeTab, setActiveTab, isAppLoading, laedt, setLaedt, ladeStatusText, setLadeStatusText, fehlerMeldung, setFehlerMeldung, appState, setAppState,
+                apiKey, setApiKey, adminPassword, setAdminPassword, cloudAdminPassword, setCloudAdminPassword, geminiModel, setGeminiModel, firebaseProjectId, setFirebaseProjectId,
+                planGeneriertBis, setPlanGeneriertBis, anzahlSonntags, setAnzahlSonntags, anzahlWerktags, setAnzahlWerktags,
                 gruppen, setGruppen, neueMessdiener, setNeueMessdiener, statistik, setStatistik, dienste, setDienste,
-                vormerkungen, setVormerkungen, regelmaessigeAbwesenheiten, setRegelmaessigeAbwesenheiten,
-                abwesenheiten, setAbwesenheiten, notizen, setNotizen, events, setEvents, prozessionen, setProzessionen,
-                pdfFile, setPdfFile, alleMinis, syncDoc
+                vormerkungen, setVormerkungen, regelmaessigeAbwesenheiten, setRegelmaessigeAbwesenheiten, abwesenheiten, setAbwesenheiten, notizen, setNotizen, events, setEvents, prozessionen, setProzessionen,
+                pdfFile, setPdfFile, alleMinis, syncDoc, parseDateStr, normalizeTime
             };
             return <ViewModelContext.Provider value={value}>{children}</ViewModelContext.Provider>;
         }
         const useViewModel = () => useContext(ViewModelContext);
 
         // ==========================================
-        // 2. PLATZHALTER FÜR DIE VIEWS
+        // 2. LANDING PAGE & SETUP
         // ==========================================
-
-        /* --- PLATZHALTER: AutocompleteField --- */
-
-        // --- LANDING PAGE ---
         function LandingPage() {
             const vm = useViewModel();
             const [showAdminLogin, setShowAdminLogin] = useState(false);
+            const [showSetup, setShowSetup] = useState(false);
             const [pwdInput, setPwdInput] = useState("");
+            const [setupProj, setSetupProj] = useState(vm.firebaseProjectId || "");
+            const [setupKey, setSetupKey] = useState(vm.apiKey || "");
+
+            const openAdmin = () => {
+                if (!vm.firebaseProjectId || !vm.apiKey) setShowSetup(true);
+                else if (vm.adminPassword && vm.adminPassword === vm.cloudAdminPassword && vm.cloudAdminPassword !== '') vm.setRoute('admin');
+                else setShowAdminLogin(true);
+            };
 
             const handleAdminLogin = () => {
                 if (!vm.cloudAdminPassword) {
-                    if(pwdInput.length > 3) { 
-                        vm.setCloudAdminPassword(pwdInput); // Speichert lokal für die Session
-                        vm.setAdminPassword(pwdInput); // Setzt das Admin-Passwort für künftige Logins
-                        vm.syncDoc('config', { adminPassword: { stringValue: pwdInput }, planGeneriertBis: { stringValue: vm.planGeneriertBis } });
-                        vm.setRoute('admin'); 
-                    } else {
-                        alert("Passwort muss mindestens 4 Zeichen lang sein.");
-                    }
+                    if(pwdInput.length > 3) { vm.setCloudAdminPassword(pwdInput); vm.setAdminPassword(pwdInput); vm.syncDoc('config', { adminPassword: { stringValue: pwdInput }, planGeneriertBis: { stringValue: vm.planGeneriertBis } }); vm.setRoute('admin'); } 
+                    else alert("Passwort muss mindestens 4 Zeichen lang sein.");
                 } else {
-                    if (pwdInput === vm.cloudAdminPassword) { 
-                        vm.setAdminPassword(pwdInput); 
-                        vm.setRoute('admin'); 
-                    } else {
-                        alert("Falsches Passwort!");
-                    }
+                    if (pwdInput === vm.cloudAdminPassword) { vm.setAdminPassword(pwdInput); vm.setRoute('admin'); } 
+                    else alert("Falsches Passwort!");
                 }
             };
+
+            if (showSetup) {
+                return (
+                    <div className="flex h-screen w-full items-center justify-center bg-[#ececec] p-4">
+                        <div className="bg-white p-10 rounded-3xl shadow-xl max-w-md w-full text-center relative">
+                            <button onClick={() => setShowSetup(false)} className="absolute top-6 left-6 text-gray-400 hover:text-gray-800"><i className="fa-solid fa-arrow-left text-xl"></i></button>
+                            <i className="fa-solid fa-database text-5xl text-blue-500 mb-6 mt-4"></i>
+                            <h2 className="text-2xl font-bold text-gray-900 mb-2">Ersteinrichtung</h2>
+                            <p className="text-gray-500 mb-6">Bitte hinterlege die Datenbank-ID und den KI-Key.</p>
+                            <input type="text" placeholder="Firebase Projekt-ID..." value={setupProj} onChange={e => setSetupProj(e.target.value)} className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-4 outline-none focus:border-blue-500 text-center" />
+                            <input type="password" placeholder="Gemini API Key..." value={setupKey} onChange={e => setSetupKey(e.target.value)} className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-6 outline-none focus:border-blue-500 text-center" />
+                            <button disabled={!setupProj.trim() || !setupKey.trim()} onClick={() => { vm.setFirebaseProjectId(setupProj.trim()); vm.setApiKey(setupKey.trim()); setShowSetup(false); setShowAdminLogin(true); }} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-lg py-3 rounded-xl transition">Speichern & Weiter</button>
+                        </div>
+                    </div>
+                );
+            }
 
             if (showAdminLogin) {
                 return (
@@ -200,112 +234,57 @@
                         <img src="Messdiener.png" alt="Logo" className="w-40 h-40 md:w-48 md:h-48 object-contain mb-6 drop-shadow-md rounded-3xl" onError={(e) => { e.target.style.display='none'; }} />
                         <h1 className="text-4xl md:text-5xl font-black text-gray-900 mb-2 tracking-tight">Messdienerplan</h1>
                         <h2 className="text-2xl font-bold text-blue-600 mb-12">Thalau</h2>
-                        
                         <div className="w-full space-y-4 px-2 md:px-4">
-                            <button onClick={() => { if(vm.adminPassword && vm.adminPassword === vm.cloudAdminPassword) vm.setRoute('admin'); else setShowAdminLogin(true); }} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-lg md:text-xl py-4 rounded-2xl shadow-lg transition flex items-center justify-center">
-                                <i className="fa-solid fa-desktop mr-3"></i>Planer öffnen
-                            </button>
-                            
-                            <button onClick={() => vm.setRoute('pfarrbuero')} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center">
-                                <i className="fa-solid fa-calendar-check mr-3"></i>Messdiener Vormerken
-                            </button>
-
-                            <button onClick={() => vm.setRoute('abwesenheiten')} className="w-full bg-red-100 hover:bg-red-200 text-red-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center">
-                                <i className="fa-solid fa-user-clock mr-3"></i>Abwesenheiten eintragen
-                            </button>
+                            <button onClick={openAdmin} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-lg md:text-xl py-4 rounded-2xl shadow-lg transition flex items-center justify-center"><i className="fa-solid fa-desktop mr-3"></i>Planer öffnen</button>
+                            <button onClick={() => vm.setRoute('pfarrbuero')} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center"><i className="fa-solid fa-calendar-check mr-3"></i>Messdiener Vormerken</button>
+                            <button onClick={() => vm.setRoute('abwesenheiten')} className="w-full bg-red-100 hover:bg-red-200 text-red-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center"><i className="fa-solid fa-user-clock mr-3"></i>Abwesenheiten eintragen</button>
                         </div>
                     </div>
                 </div>
             );
         }
 
-        // --- ABWESENHEITEN PORTAL (Ersatz für Google Forms) ---
+        // ==========================================
+        // 3. ABWESENHEITEN PORTAL
+        // ==========================================
         function AbwesenheitenPortal() {
             const vm = useViewModel();
             const [step, setStep] = useState(1);
             const [name, setName] = useState("");
-            
-            // Step 2 Form
             const [neueEintraege, setNeueEintraege] = useState([{ id: crypto.randomUUID(), type: 'single', start: '', end: '' }]);
             const [showExisting, setShowExisting] = useState(false);
 
             const handleNameSubmit = () => {
-                if(!vm.alleMinis.includes(name.trim())) {
-                    alert("Name nicht in der Datenbank gefunden! Bitte wähle deinen Namen aus der Vorschlagsliste aus.");
-                    return;
-                }
+                if(!vm.alleMinis.includes(name.trim())) { alert("Name nicht in der Datenbank gefunden! Bitte wähle deinen Namen aus der Vorschlagsliste aus."); return; }
                 setStep(2);
             };
 
-            const addNewField = () => {
-                setNeueEintraege([...neueEintraege, { id: crypto.randomUUID(), type: 'single', start: '', end: '' }]);
-            };
-
-            const updateEintrag = (id, field, value) => {
-                setNeueEintraege(neueEintraege.map(e => e.id === id ? { ...e, [field]: value } : e));
-            };
-
-            const removeEintrag = (id) => {
-                setNeueEintraege(neueEintraege.filter(e => e.id !== id));
-            };
-
             const handleSubmitFinal = () => {
-                const valideEintraege = neueEintraege.filter(e => e.start !== "");
-                if (valideEintraege.length === 0) {
-                    alert("Bitte mindestens ein gültiges Datum eintragen!");
-                    return;
-                }
-
-                const neueAbwesenheiten = valideEintraege.map(e => ({
-                    id: crypto.randomUUID(),
-                    name: name.trim(),
-                    start: e.start,
-                    end: e.type === 'period' ? e.end : e.start,
-                    type: e.type
-                }));
-
+                const valide = neueEintraege.filter(e => e.start !== "");
+                if (valide.length === 0) { alert("Bitte mindestens ein gültiges Datum eintragen!"); return; }
+                const neueAbwesenheiten = valide.map(e => ({ id: crypto.randomUUID(), name: name.trim(), start: e.start, end: e.type === 'period' ? e.end : e.start, type: e.type }));
                 vm.setAbwesenheiten([...vm.abwesenheiten, ...neueAbwesenheiten]);
                 setStep(3);
             };
 
-            const formatDate = (isoString) => {
-                if (!isoString) return "";
-                const parts = isoString.split('-');
-                return `${parts[2]}.${parts[1]}.${parts[0]}`;
-            };
-
-            const isLocked = (dateString) => {
-                if (!vm.planGeneriertBis || !dateString) return false;
-                return new Date(dateString) <= new Date(vm.planGeneriertBis);
-            };
-
+            const formatDate = (isoStr) => { if (!isoStr) return ""; const p = isoStr.split('-'); return `${p[2]}.${p[1]}.${p[0]}`; };
+            const isLocked = (dateStr) => { if (!vm.planGeneriertBis || !dateStr) return false; return new Date(dateStr) <= new Date(vm.planGeneriertBis); };
             const existingEntries = vm.abwesenheiten.filter(a => a.name === name.trim() && new Date(a.start) >= new Date(new Date().setHours(0,0,0,0))).sort((a, b) => new Date(a.start) - new Date(b.start));
 
             if (step === 3) {
                 return (
-                    <div className="min-h-screen bg-gray-50 py-10 px-4">
-                        <div className="max-w-2xl mx-auto w-full">
-                            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6 p-8 text-center">
-                                <i className="fa-solid fa-circle-check text-6xl text-green-500 mb-4"></i>
-                                <h1 className="text-3xl font-bold text-gray-900 mb-2">Erfolgreich gesendet!</h1>
-                                <p className="text-gray-600 mb-8">Deine Abwesenheiten für <strong>{name}</strong> wurden in der Datenbank gespeichert.</p>
-                                
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-left mb-8">
-                                    {neueEintraege.filter(e => e.start).map(e => (
-                                        <div key={e.id} className="bg-green-50 border border-green-200 p-4 rounded-xl">
-                                            <i className="fa-solid fa-calendar-xmark text-green-600 mb-2"></i>
-                                            <div className="font-bold text-gray-800">
-                                                {e.type === 'single' ? formatDate(e.start) : `${formatDate(e.start)} - ${formatDate(e.end)}`}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                <button onClick={() => { setStep(2); setNeueEintraege([{ id: crypto.randomUUID(), type: 'single', start: '', end: '' }]); }} className="text-blue-600 font-bold hover:underline">
-                                    <i className="fa-solid fa-arrow-left mr-2"></i>Weitere Abwesenheiten eintragen
-                                </button>
+                    <div className="min-h-screen bg-gray-50 py-10 px-4 flex items-center justify-center">
+                        <div className="max-w-2xl w-full text-center bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+                            <i className="fa-solid fa-circle-check text-6xl text-green-500 mb-4"></i>
+                            <h1 className="text-3xl font-bold text-gray-900 mb-2">Erfolgreich gesendet!</h1>
+                            <p className="text-gray-600 mb-8">Deine Abwesenheiten für <strong>{name}</strong> wurden gespeichert.</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-left mb-8">
+                                {neueEintraege.filter(e => e.start).map(e => (
+                                    <div key={e.id} className="bg-green-50 border border-green-200 p-4 rounded-xl"><i className="fa-solid fa-calendar-xmark text-green-600 mb-2"></i><div className="font-bold text-gray-800">{e.type === 'single' ? formatDate(e.start) : `${formatDate(e.start)} - ${formatDate(e.end)}`}</div></div>
+                                ))}
                             </div>
-                            <button onClick={() => vm.setRoute('landing')} className="w-full text-center text-gray-500 font-medium">Zurück zur Startseite</button>
+                            <button onClick={() => { setStep(2); setNeueEintraege([{ id: crypto.randomUUID(), type: 'single', start: '', end: '' }]); }} className="text-blue-600 font-bold hover:underline block w-full mb-4">Weitere Abwesenheiten eintragen</button>
+                            <button onClick={() => vm.setRoute('landing')} className="text-gray-500 font-medium">Zurück zur Startseite</button>
                         </div>
                     </div>
                 );
@@ -314,100 +293,57 @@
             return (
                 <div className="min-h-screen bg-[#f0ebf8] py-8 px-4 overflow-y-auto">
                     <div className="max-w-2xl mx-auto w-full">
-                        
-                        {/* Header Box */}
                         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6">
                             <div className="h-3 bg-red-500 w-full"></div>
                             <div className="p-6 md:p-8">
                                 <h1 className="text-3xl font-bold text-gray-900 mb-4">Abwesenheiten eintragen</h1>
-                                <p className="text-gray-600 mb-4 leading-relaxed">In diesem Formular könnt ihr angeben, wann ihr nicht zum Dienen eingeteilt werden könnt. Dies kann ein einzelnes Datum oder ein Zeitraum von mehreren Wochen sein. (Bitte nur eintragen, wenn ihr auch wirklich verhindert seid!)</p>
-                                <hr className="my-4 border-gray-200" />
-                                <p className="text-red-500 text-sm font-medium">* Gibt eine erforderliche Frage an</p>
+                                <p className="text-gray-600 mb-4 leading-relaxed">In diesem Formular könnt ihr angeben, wann ihr nicht zum Dienen eingeteilt werden könnt. Dies kann ein einzelnes Datum oder ein Zeitraum sein. (Bitte nur eintragen, wenn ihr wirklich verhindert seid!)</p>
+                                <hr className="my-4 border-gray-200" /><p className="text-red-500 text-sm font-medium">* Gibt eine erforderliche Frage an</p>
                             </div>
                         </div>
 
                         {step === 1 && (
                             <>
-                                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 md:p-8 mb-6 transition-all">
-                                    <label className="block text-lg font-medium text-gray-800 mb-6">Vor- und Nachname des Messdieners <span className="text-red-500">*</span></label>
-                                    <AutocompleteField value={name} onChange={setName} suggestions={vm.alleMinis} placeholder="Meine Antwort" className="w-full border-b border-gray-300 focus:border-red-500 pb-2 text-lg outline-none bg-transparent transition-colors" />
-                                </div>
-                                
-                                <div className="flex justify-between items-center mt-8">
-                                    <button onClick={() => vm.setRoute('landing')} className="text-gray-500 font-bold hover:bg-gray-100 px-4 py-2 rounded-lg transition">Abbrechen</button>
-                                    <button onClick={handleNameSubmit} disabled={!name.trim()} className="bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:bg-gray-400 text-white font-bold px-8 py-3 rounded-xl transition shadow-md">Weiter</button>
-                                </div>
+                                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 md:p-8 mb-6"><label className="block text-lg font-medium text-gray-800 mb-6">Vor- und Nachname des Messdieners <span className="text-red-500">*</span></label><AutocompleteField value={name} onChange={setName} suggestions={vm.alleMinis} placeholder="Meine Antwort" className="w-full border-b border-gray-300 focus:border-red-500 pb-2 text-lg outline-none bg-transparent transition-colors" /></div>
+                                <div className="flex justify-between items-center mt-8"><button onClick={() => vm.setRoute('landing')} className="text-gray-500 font-bold hover:bg-gray-100 px-4 py-2 rounded-lg transition">Abbrechen</button><button onClick={handleNameSubmit} disabled={!name.trim()} className="bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-bold px-8 py-3 rounded-xl transition shadow-md">Weiter</button></div>
                             </>
                         )}
 
                         {step === 2 && (
                             <div className="space-y-6">
-                                {/* Bereits eingetragene Abwesenheiten (Akkordeon) */}
                                 {existingEntries.length > 0 && (
                                     <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-                                        <button onClick={() => setShowExisting(!showExisting)} className="w-full p-6 text-left flex justify-between items-center hover:bg-gray-50 transition">
-                                            <span className="font-bold text-gray-800 text-lg">Aktuelle Abwesenheiten für {name} ansehen</span>
-                                            <i className={`fa-solid fa-chevron-${showExisting ? 'up' : 'down'} text-gray-400`}></i>
-                                        </button>
+                                        <button onClick={() => setShowExisting(!showExisting)} className="w-full p-6 text-left flex justify-between items-center hover:bg-gray-50 transition"><span className="font-bold text-gray-800 text-lg">Aktuelle Abwesenheiten für {name} ansehen</span><i className={`fa-solid fa-chevron-${showExisting ? 'up' : 'down'} text-gray-400`}></i></button>
                                         {showExisting && (
                                             <div className="p-6 border-t border-gray-100 bg-gray-50 space-y-3">
                                                 {existingEntries.map(a => (
                                                     <div key={a.id} className="flex justify-between items-center bg-white p-4 rounded-xl border border-gray-200">
-                                                        <div>
-                                                            <div className="font-bold text-gray-800">{a.type === 'single' ? formatDate(a.start) : `${formatDate(a.start)} - ${formatDate(a.end)}`}</div>
-                                                            {isLocked(a.start) && <div className="text-xs text-red-500 font-bold mt-1"><i className="fa-solid fa-lock mr-1"></i>Plan bereits erstellt</div>}
-                                                        </div>
-                                                        {!isLocked(a.start) && (
-                                                            <button onClick={() => { if(confirm("Eintrag löschen?")) vm.setAbwesenheiten(vm.abwesenheiten.filter(x => x.id !== a.id)); }} className="text-red-400 hover:text-red-600 p-2"><i className="fa-solid fa-trash"></i></button>
-                                                        )}
+                                                        <div><div className="font-bold text-gray-800">{a.type === 'single' ? formatDate(a.start) : `${formatDate(a.start)} - ${formatDate(a.end)}`}</div>{isLocked(a.start) && <div className="text-xs text-red-500 font-bold mt-1"><i className="fa-solid fa-lock mr-1"></i>Plan bereits erstellt</div>}</div>
+                                                        {!isLocked(a.start) && <button onClick={() => { if(confirm("Eintrag löschen?")) vm.setAbwesenheiten(vm.abwesenheiten.filter(x => x.id !== a.id)); }} className="text-red-400 hover:text-red-600 p-2"><i className="fa-solid fa-trash"></i></button>}
                                                     </div>
                                                 ))}
-                                                {vm.planGeneriertBis && <p className="text-xs text-gray-500 mt-2"><i className="fa-solid fa-info-circle mr-1"></i>Für Daten bis zum {formatDate(vm.planGeneriertBis)} wurde der Plan bereits erstellt. Diese können nicht mehr gelöscht werden.</p>}
+                                                {vm.planGeneriertBis && <p className="text-xs text-gray-500 mt-2"><i className="fa-solid fa-info-circle mr-1"></i>Für Daten bis zum {formatDate(vm.planGeneriertBis)} wurde der Plan bereits erstellt. Diese können nicht gelöscht werden.</p>}
                                             </div>
                                         )}
                                     </div>
                                 )}
-
-                                {/* Neue Felder */}
                                 {neueEintraege.map((eintrag, idx) => (
                                     <div key={eintrag.id} className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 md:p-8 relative">
-                                        {neueEintraege.length > 1 && <button onClick={() => removeEintrag(eintrag.id)} className="absolute top-6 right-6 text-gray-400 hover:text-red-500"><i className="fa-solid fa-xmark text-xl"></i></button>}
-                                        
-                                        <label className="block text-lg font-medium text-gray-800 mb-6">Abwesend am / Start der Abwesenheit <span className="text-red-500">*</span></label>
-                                        <input type="date" value={eintrag.start} onChange={e => updateEintrag(eintrag.id, 'start', e.target.value)} min={new Date().toISOString().split('T')[0]} className="w-full md:w-1/2 border-b border-gray-300 focus:border-red-500 pb-2 text-lg outline-none bg-transparent mb-8" />
-
-                                        <label className="block text-lg font-medium text-gray-800 mb-4">Bist du nur an diesem Tag oder über einen längeren Zeitraum abwesend? <span className="text-red-500">*</span></label>
+                                        {neueEintraege.length > 1 && <button onClick={() => setNeueEintraege(neueEintraege.filter(e=>e.id!==eintrag.id))} className="absolute top-6 right-6 text-gray-400 hover:text-red-500"><i className="fa-solid fa-xmark text-xl"></i></button>}
+                                        <label className="block text-lg font-medium text-gray-800 mb-6">Start der Abwesenheit <span className="text-red-500">*</span></label>
+                                        <input type="date" value={eintrag.start} onChange={e => setNeueEintraege(neueEintraege.map(x=>x.id===eintrag.id?{...x,start:e.target.value}:x))} min={new Date().toISOString().split('T')[0]} className="w-full md:w-1/2 border-b border-gray-300 focus:border-red-500 pb-2 text-lg outline-none bg-transparent mb-8" />
+                                        <label className="block text-lg font-medium text-gray-800 mb-4">Nur an diesem Tag oder längerer Zeitraum? <span className="text-red-500">*</span></label>
                                         <div className="space-y-3 mb-8">
-                                            <label className="flex items-center space-x-3 cursor-pointer p-2 rounded-lg hover:bg-gray-50 transition">
-                                                <input type="radio" name={`type_${eintrag.id}`} checked={eintrag.type === 'single'} onChange={() => updateEintrag(eintrag.id, 'type', 'single')} className="w-5 h-5 accent-red-500" />
-                                                <span className="text-gray-800 text-lg">Nur dieser Tag</span>
-                                            </label>
-                                            <label className="flex items-center space-x-3 cursor-pointer p-2 rounded-lg hover:bg-gray-50 transition">
-                                                <input type="radio" name={`type_${eintrag.id}`} checked={eintrag.type === 'period'} onChange={() => updateEintrag(eintrag.id, 'type', 'period')} className="w-5 h-5 accent-red-500" />
-                                                <span className="text-gray-800 text-lg">Mehrere Tage</span>
-                                            </label>
+                                            <label className="flex items-center space-x-3 cursor-pointer p-2 rounded-lg hover:bg-gray-50"><input type="radio" checked={eintrag.type === 'single'} onChange={() => setNeueEintraege(neueEintraege.map(x=>x.id===eintrag.id?{...x,type:'single'}:x))} className="w-5 h-5 accent-red-500" /><span className="text-gray-800 text-lg">Nur dieser Tag</span></label>
+                                            <label className="flex items-center space-x-3 cursor-pointer p-2 rounded-lg hover:bg-gray-50"><input type="radio" checked={eintrag.type === 'period'} onChange={() => setNeueEintraege(neueEintraege.map(x=>x.id===eintrag.id?{...x,type:'period'}:x))} className="w-5 h-5 accent-red-500" /><span className="text-gray-800 text-lg">Mehrere Tage</span></label>
                                         </div>
-
                                         {eintrag.type === 'period' && (
-                                            <div className="bg-red-50 p-6 rounded-xl border border-red-100">
-                                                <label className="block text-lg font-medium text-gray-800 mb-2">Bis wann kannst du nicht eingeteilt werden?</label>
-                                                <p className="text-sm text-gray-600 mb-4">Bitte melde dich nur solange ab, wie du auch wirklich nicht dienen kannst!</p>
-                                                <input type="date" value={eintrag.end} onChange={e => updateEintrag(eintrag.id, 'end', e.target.value)} min={eintrag.start || new Date().toISOString().split('T')[0]} className="w-full md:w-1/2 border-b border-gray-300 focus:border-red-500 pb-2 text-lg outline-none bg-transparent" />
-                                            </div>
+                                            <div className="bg-red-50 p-6 rounded-xl border border-red-100"><label className="block text-lg font-medium text-gray-800 mb-2">Bis wann?</label><input type="date" value={eintrag.end} onChange={e => setNeueEintraege(neueEintraege.map(x=>x.id===eintrag.id?{...x,end:e.target.value}:x))} min={eintrag.start || new Date().toISOString().split('T')[0]} className="w-full md:w-1/2 border-b border-gray-300 focus:border-red-500 pb-2 text-lg outline-none bg-transparent" /></div>
                                         )}
                                     </div>
                                 ))}
-
-                                <div className="flex justify-center mb-8">
-                                    <button onClick={addNewField} className="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-bold px-6 py-3 rounded-full shadow-sm transition flex items-center">
-                                        <i className="fa-solid fa-plus mr-2"></i>Weiteres Datum hinzufügen
-                                    </button>
-                                </div>
-
-                                <div className="flex justify-between items-center mt-8 pb-10">
-                                    <button onClick={() => setStep(1)} className="text-gray-500 font-bold hover:bg-gray-100 px-4 py-2 rounded-lg transition">Zurück</button>
-                                    <button onClick={handleSubmitFinal} className="bg-red-500 hover:bg-red-600 text-white font-bold px-8 py-3 rounded-xl transition shadow-md">Senden</button>
-                                </div>
+                                <div className="flex justify-center mb-8"><button onClick={() => setNeueEintraege([...neueEintraege, { id: crypto.randomUUID(), type: 'single', start: '', end: '' }])} className="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-bold px-6 py-3 rounded-full shadow-sm flex items-center"><i className="fa-solid fa-plus mr-2"></i>Weiteres Datum</button></div>
+                                <div className="flex justify-between items-center mt-8 pb-10"><button onClick={() => setStep(1)} className="text-gray-500 font-bold hover:bg-gray-100 px-4 py-2 rounded-lg transition">Zurück</button><button onClick={handleSubmitFinal} className="bg-red-500 hover:bg-red-600 text-white font-bold px-8 py-3 rounded-xl transition shadow-md">Senden</button></div>
                             </div>
                         )}
                     </div>
@@ -415,188 +351,94 @@
             );
         }
 
-        // --- PFARRBÜRO VIEW (Mobil optimiert) ---
+        // ==========================================
+        // 4. PFARRBÜRO VIEW
+        // ==========================================
         function PfarrbueroView() {
             const vm = useViewModel();
-            const [datum, setDatum] = useState(''); 
-            const [anlass, setAnlass] = useState(''); 
-            const [uhrzeit, setUhrzeit] = useState(''); 
-            const [minis, setMinis] = useState([""]);
-
+            const [datum, setDatum] = useState(''); const [anlass, setAnlass] = useState(''); const [uhrzeit, setUhrzeit] = useState(''); const [minis, setMinis] = useState([""]);
             const handleSave = () => {
                 if(!datum) { alert("Bitte ein Datum eingeben!"); return; }
                 const parts = datum.split('-'); let wt = "Sonntag";
-                if(parts.length === 3) { 
-                    const d = new Date(parts[0], parts[1]-1, parts[2]); 
-                    const days = ['Sonntag','Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag']; 
-                    wt = days[d.getDay()]; 
-                }
+                if(parts.length === 3) { const d = new Date(parts[0], parts[1]-1, parts[2]); const days = ['Sonntag','Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag']; wt = days[d.getDay()]; }
                 const formattedDate = parts.length === 3 ? `${parts[2]}.${parts[1]}.${parts[0]}` : datum;
-                
-                vm.setVormerkungen([...vm.vormerkungen, { 
-                    id: crypto.randomUUID(), 
-                    datum: formattedDate, 
-                    wochentag: wt, 
-                    uhrzeit: uhrzeit, 
-                    anlass: anlass || "Gottesdienst", 
-                    minis: minis.filter(m => m.trim() !== "" && vm.alleMinis.includes(m.trim())) 
-                }]);
-                
-                alert("Erfolgreich vorgemerkt!"); 
-                setDatum(''); setAnlass(''); setUhrzeit(''); setMinis([""]); 
-                vm.setRoute('landing');
+                vm.setVormerkungen([...vm.vormerkungen, { id: crypto.randomUUID(), datum: formattedDate, wochentag: wt, uhrzeit: uhrzeit, anlass: anlass || "Gottesdienst", minis: minis.filter(m => m.trim() !== "" && vm.alleMinis.includes(m.trim())) }]);
+                alert("Erfolgreich vorgemerkt!"); setDatum(''); setAnlass(''); setUhrzeit(''); setMinis([""]); vm.setRoute('landing');
             };
-
             return (
                 <div className="min-h-screen bg-gray-50 flex flex-col">
-                    <div className="bg-blue-600 text-white p-4 pt-10 flex items-center shadow-md sticky top-0 z-10">
-                        <button onClick={() => vm.setRoute('landing')} className="text-white hover:text-blue-200 p-2"><i className="fa-solid fa-chevron-left text-xl"></i></button>
-                        <h1 className="text-xl font-bold ml-4 flex-1">Vormerken (Pfarrbüro)</h1>
-                    </div>
-                    
+                    <div className="bg-blue-600 text-white p-4 pt-10 flex items-center shadow-md sticky top-0 z-10"><button onClick={() => vm.setRoute('landing')} className="text-white hover:text-blue-200 p-2"><i className="fa-solid fa-chevron-left text-xl"></i></button><h1 className="text-xl font-bold ml-4 flex-1">Vormerken (Pfarrbüro)</h1></div>
                     <div className="p-6 flex-1 max-w-2xl mx-auto w-full">
-                        <div className="bg-blue-50 text-blue-800 p-4 rounded-xl mb-8 text-sm leading-relaxed border border-blue-100">
-                            <i className="fa-solid fa-circle-info mr-2"></i>
-                            Hier können Sie Messdiener eintragen, die sich bereits für einen bestimmten Gottesdienst gemeldet haben.
-                        </div>
-                        
+                        <div className="bg-blue-50 text-blue-800 p-4 rounded-xl mb-8 text-sm leading-relaxed border border-blue-100"><i className="fa-solid fa-circle-info mr-2"></i>Hier können Sie Messdiener eintragen, die sich bereits für einen Gottesdienst gemeldet haben.</div>
                         <div className="space-y-6">
-                            <div className="ios-card p-5 border border-gray-100">
-                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Datum *</label>
-                                <input type="date" value={datum} onChange={e => setDatum(e.target.value)} className="w-full text-lg border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent" />
-                            </div>
-                            
-                            <div className="ios-card p-5 border border-gray-100 flex flex-col md:flex-row gap-4">
-                                <div className="flex-1">
-                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Uhrzeit</label>
-                                    <input type="text" placeholder="z.B. 09.30" value={uhrzeit} onChange={e => setUhrzeit(e.target.value)} className="w-full text-lg border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent" />
-                                </div>
-                                <div className="flex-1">
-                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Anlass</label>
-                                    <input type="text" placeholder="z.B. Taufe" value={anlass} onChange={e => setAnlass(e.target.value)} className="w-full text-lg border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent" />
-                                </div>
-                            </div>
-                            
-                            <div className="ios-card p-5 border border-gray-100">
-                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-4">Fest eingeteilte Personen</label>
-                                {minis.map((m, i) => (
-                                    <div key={i} className="flex items-center mb-3">
-                                        <span className="text-gray-400 font-medium mr-3 w-4 text-right">{i+1}.</span>
-                                        <AutocompleteField value={m} onChange={val => { let nm = [...minis]; nm[i] = val; setMinis(nm); }} suggestions={vm.alleMinis} placeholder="Name suchen..." className="flex-1 border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent text-lg" />
-                                    </div>
-                                ))}
-                                <button onClick={() => setMinis([...minis, ""])} className="mt-4 text-blue-600 font-bold flex items-center"><i className="fa-solid fa-circle-plus mr-2"></i>Weitere Person</button>
-                            </div>
-                            
-                            <button onClick={handleSave} className="w-full bg-blue-600 active:bg-blue-700 text-white font-bold text-xl py-4 rounded-xl shadow-lg mt-8 mb-10 transition">
-                                Vormerkung Speichern
-                            </button>
+                            <div className="ios-card p-5 border border-gray-100"><label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Datum *</label><input type="date" value={datum} onChange={e => setDatum(e.target.value)} className="w-full text-lg border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent" /></div>
+                            <div className="ios-card p-5 border border-gray-100 flex flex-col md:flex-row gap-4"><div className="flex-1"><label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Uhrzeit</label><input type="text" placeholder="z.B. 09.30" value={uhrzeit} onChange={e => setUhrzeit(e.target.value)} className="w-full text-lg border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent" /></div><div className="flex-1"><label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Anlass</label><input type="text" placeholder="z.B. Taufe" value={anlass} onChange={e => setAnlass(e.target.value)} className="w-full text-lg border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent" /></div></div>
+                            <div className="ios-card p-5 border border-gray-100"><label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-4">Fest eingeteilte Personen</label>{minis.map((m, i) => <div key={i} className="flex items-center mb-3"><span className="text-gray-400 font-medium mr-3 w-4 text-right">{i+1}.</span><AutocompleteField value={m} onChange={val => { let nm = [...minis]; nm[i] = val; setMinis(nm); }} suggestions={vm.alleMinis} placeholder="Name suchen..." className="flex-1 border-b border-gray-200 py-2 outline-none focus:border-blue-500 bg-transparent text-lg" /></div>)}<button onClick={() => setMinis([...minis, ""])} className="mt-4 text-blue-600 font-bold flex items-center"><i className="fa-solid fa-circle-plus mr-2"></i>Weitere Person</button></div>
+                            <button onClick={handleSave} className="w-full bg-blue-600 active:bg-blue-700 text-white font-bold text-xl py-4 rounded-xl shadow-lg mt-8 mb-10 transition">Vormerkung Speichern</button>
                         </div>
                     </div>
                 </div>
             );
         }
-// ==========================================
-        // 4. GLOBALE HELPER FÜR DIE VIEWS
+
         // ==========================================
-        const parseDateStr = (str) => {
-            if (!str) return null; const parts = str.match(/\d+/g); if (!parts || parts.length < 2) return null;
-            return new Date(parts.length >= 3 ? parseInt(parts[2]) : new Date().getFullYear(), parseInt(parts[1]) - 1, parseInt(parts[0]));
-        };
+        // 5. ADMIN VIEWS (Planer, Messdiener, etc.)
+        // ==========================================
+        function MobileTopBar({ title }) {
+            const vm = useViewModel();
+            return (
+                <div className="md:hidden bg-white text-gray-900 p-4 pt-10 flex items-center shadow-sm sticky top-0 z-50 border-b border-gray-200"><button onClick={() => vm.setActiveTab('menu')} className="text-blue-600 hover:text-blue-800 p-2 pl-0"><i className="fa-solid fa-chevron-left text-xl mr-1"></i> Menü</button><h1 className="text-xl font-bold ml-2 flex-1 truncate">{title}</h1></div>
+            );
+        }
 
-        const normalizeTime = (time) => {
-            if(!time) return "";
-            let clean = time.replace(/h/gi, '').replace(/uhr/gi, '').trim();
-            let parts = clean.split(/[:.]/);
-            if (parts.length === 2) { return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.${parts[1].length === 1 ? `${parts[1]}0` : (parts[1] === "" ? "00" : parts[1])}`; }
-            else if (parts.length === 1 && parts[0] !== "") { return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.00`; }
-            return time;
-        };
+        function Sidebar() {
+            const { activeTab, setActiveTab } = useViewModel();
+            const menuItems = [{ section: "Arbeitsbereich", items: [{ id: 'planer', label: 'Planer', icon: 'fa-regular fa-file-lines' }, { id: 'prozessionen', label: 'Prozessionen', icon: 'fa-solid fa-person-walking' }, { id: 'events', label: 'Events & Aktionen', icon: 'fa-solid fa-champagne-glasses' }, { id: 'vormerken', label: 'Vormerken', icon: 'fa-regular fa-calendar-check' }, { id: 'statistik', label: 'Statistik', icon: 'fa-solid fa-chart-column' }, { id: 'notizen', label: 'Notizen', icon: 'fa-regular fa-note-sticky' }, { id: 'werkzeuge', label: 'Werkzeuge', icon: 'fa-solid fa-screwdriver-wrench' }]}, { section: "Konfiguration", items: [{ id: 'messdiener', label: 'Messdiener & Gruppen', icon: 'fa-solid fa-user-group' }, { id: 'einstellungen', label: 'Einstellungen', icon: 'fa-solid fa-gear' }]}];
+            return (
+                <div className="w-[260px] h-full bg-[#f5f5f5] border-r border-gray-300 flex flex-col select-none z-20 shrink-0">
+                    <div className="p-4 pt-10 pb-6 text-xl font-bold text-gray-800 ml-2">Messdiener Planer</div>
+                    <div className="flex-1 overflow-y-auto px-3">
+                        {menuItems.map((sec, i) => (
+                            <div key={i} className="mb-6"><h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2 ml-2">{sec.section}</h3><ul className="space-y-1">{sec.items.map(item => (<li key={item.id}><button onClick={() => setActiveTab(item.id)} className={`w-full flex items-center px-3 py-2 rounded-lg transition text-[14px] font-medium ${activeTab === item.id ? 'bg-[#007aff] text-white shadow-sm' : 'text-gray-700 hover:bg-gray-200'}`}><i className={`${item.icon} w-5 text-center ${activeTab === item.id ? 'text-white' : 'text-blue-500'}`}></i><span className="ml-2">{item.label}</span></button></li>))}</ul></div>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
 
-        function usePlanerLogic(vm) {
-            const getWeekIdentifier = (dateStr) => {
-                const d = parseDateStr(dateStr); if (!d) return crypto.randomUUID();
-                const dCopy = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-                dCopy.setUTCDate(dCopy.getUTCDate() + 4 - (dCopy.getUTCDay() || 7));
-                const yearStart = new Date(Date.UTC(dCopy.getUTCFullYear(),0,1));
-                return `${dCopy.getUTCFullYear()}-${Math.ceil((((dCopy - yearStart) / 86400000) + 1)/7).toString().padStart(2, '0')}`;
-            };
-
-            const getChronologischeBloecke = () => {
-                let bloecke = []; let currentWeek = null; let currentDienste = [];
-                const sorted = [...vm.dienste].sort((a, b) => {
-                    const d1 = parseDateStr(a.datum) || new Date(0); const d2 = parseDateStr(b.datum) || new Date(0);
-                    if (d1.getTime() === d2.getTime()) return normalizeTime(a.uhrzeit).localeCompare(normalizeTime(b.uhrzeit));
-                    return d1 - d2;
-                });
-                for (let dienst of sorted) {
-                    const w = getWeekIdentifier(dienst.datum);
-                    if (w !== currentWeek) {
-                        if (currentWeek !== null) {
-                            let counts = {}; currentDienste.forEach(d => { if (d.gruppe) counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; });
-                            bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : "Ohne Gruppe", dienste: currentDienste });
-                        }
-                        currentWeek = w; currentDienste = [dienst];
-                    } else currentDienste.push(dienst);
-                }
-                if (currentWeek !== null) {
-                    let counts = {}; currentDienste.forEach(d => { if (d.gruppe) counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; });
-                    bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : "Ohne Gruppe", dienste: currentDienste });
-                }
-                return bloecke;
-            };
+        function PlanerView() {
+            const vm = useViewModel();
+            const getWeekIdentifier = (dateStr) => { const d = vm.parseDateStr(dateStr); if (!d) return crypto.randomUUID(); const dCopy = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); dCopy.setUTCDate(dCopy.getUTCDate() + 4 - (dCopy.getUTCDay() || 7)); const yearStart = new Date(Date.UTC(dCopy.getUTCFullYear(),0,1)); return `${dCopy.getUTCFullYear()}-${Math.ceil((((dCopy - yearStart) / 86400000) + 1)/7).toString().padStart(2, '0')}`; };
+            const getChronologischeBloecke = () => { let bloecke = []; let currentWeek = null; let currentDienste = []; const sorted = [...vm.dienste].sort((a, b) => { const d1 = vm.parseDateStr(a.datum) || new Date(0); const d2 = vm.parseDateStr(b.datum) || new Date(0); if (d1.getTime() === d2.getTime()) return vm.normalizeTime(a.uhrzeit).localeCompare(vm.normalizeTime(b.uhrzeit)); return d1 - d2; }); for (let dienst of sorted) { const w = getWeekIdentifier(dienst.datum); if (w !== currentWeek) { if (currentWeek !== null) { let counts = {}; currentDienste.forEach(d => { if (d.gruppe) counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; }); bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : "Ohne Gruppe", dienste: currentDienste }); } currentWeek = w; currentDienste = [dienst]; } else currentDienste.push(dienst); } if (currentWeek !== null) { let counts = {}; currentDienste.forEach(d => { if (d.gruppe) counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; }); bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : "Ohne Gruppe", dienste: currentDienste }); } return bloecke; };
+            const bloecke = getChronologischeBloecke();
 
             const leseGottesdienste = async () => {
-                if (!vm.apiKey) { vm.setFehlerMeldung("Bitte API-Key in den Einstellungen hinterlegen."); return; }
+                if (!vm.apiKey) { vm.setFehlerMeldung("Bitte API-Key hinterlegen."); return; }
                 if (!vm.pdfFile) { vm.setFehlerMeldung("Bitte PDF wählen."); return; }
                 vm.setLaedt(true); vm.setFehlerMeldung(null); vm.setLadeStatusText("Lese Datei aus...");
                 try {
                     const base64String = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(vm.pdfFile); });
                     vm.setLadeStatusText("KI analysiert Pfarrbrief...");
-                    const body = {
-                        systemInstruction: { parts: [{ text: "Du bist ein präziser Parser für Pfarrbrief-Daten. Extrahiere Gottesdienste in Thalau. Erlaube Hl. Messe, Taufe, Hochzeit, Beerdigung, Osternacht, Christmette. Gib JSON Array zurück mit datum, wochentag, uhrzeit, anlass, gruppe, minis." }] },
-                        contents: [{ parts: [{ text: "Analysiere PDF." }, { inlineData: { mimeType: "application/pdf", data: base64String } }] }],
-                        generationConfig: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "OBJECT", properties: { datum: { type: "STRING" }, wochentag: { type: "STRING" }, uhrzeit: { type: "STRING" }, anlass: { type: "STRING" }, gruppe: { type: "STRING" }, minis: { type: "ARRAY", items: { type: "STRING" } } }, required: ["datum", "wochentag", "uhrzeit", "anlass", "minis"] } } }
-                    };
+                    const body = { systemInstruction: { parts: [{ text: "Extrahiere Gottesdienste in Thalau (Hl. Messe, Taufe, Hochzeit, Beerdigung, Osternacht, Christmette). JSON Array mit datum, wochentag, uhrzeit, anlass, gruppe, minis." }] }, contents: [{ parts: [{ text: "Analysiere PDF." }, { inlineData: { mimeType: "application/pdf", data: base64String } }] }], generationConfig: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "OBJECT", properties: { datum: { type: "STRING" }, wochentag: { type: "STRING" }, uhrzeit: { type: "STRING" }, anlass: { type: "STRING" }, gruppe: { type: "STRING" }, minis: { type: "ARRAY", items: { type: "STRING" } } }, required: ["datum", "wochentag", "uhrzeit", "anlass", "minis"] } } } };
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${vm.geminiModel}:generateContent?key=${vm.apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-                    const json = await response.json();
-                    if (json.error) throw new Error(json.error.message);
+                    const json = await response.json(); if (json.error) throw new Error(json.error.message);
                     let rawDienste = JSON.parse(json.candidates[0].content.parts[0].text.replace(/^```json/, '').replace(/^```/, '').replace(/```$/, '').trim());
-                    
-                    let wochenGruppen = {};
-                    rawDienste.forEach(d => { if (d.gruppe) wochenGruppen[getWeekIdentifier(d.datum)] = d.gruppe.replace(/Gruppe/i, '').trim(); });
+                    let wochenGruppen = {}; rawDienste.forEach(d => { if (d.gruppe) wochenGruppen[getWeekIdentifier(d.datum)] = d.gruppe.replace(/Gruppe/i, '').trim(); });
                     let alleWochen = [...new Set(rawDienste.map(d => getWeekIdentifier(d.datum)))].sort();
                     let aktuelleGruppe = vm.nextGroup1 || (vm.gruppen[0]?.name || "A");
                     if (alleWochen.length > 0 && wochenGruppen[alleWochen[0]]) aktuelleGruppe = wochenGruppen[alleWochen[0]];
                     const gruppenNamen = vm.gruppen.map(g => g.name);
-                    alleWochen.forEach(woche => {
-                        if (wochenGruppen[woche]) aktuelleGruppe = wochenGruppen[woche];
-                        wochenGruppen[woche] = aktuelleGruppe;
-                        aktuelleGruppe = gruppenNamen[(gruppenNamen.indexOf(aktuelleGruppe) + 1) % gruppenNamen.length];
-                    });
-
+                    alleWochen.forEach(woche => { if (wochenGruppen[woche]) aktuelleGruppe = wochenGruppen[woche]; wochenGruppen[woche] = aktuelleGruppe; aktuelleGruppe = gruppenNamen[(gruppenNamen.indexOf(aktuelleGruppe) + 1) % gruppenNamen.length]; });
                     let bereinigteDienste = [];
                     rawDienste.forEach(raw => {
-                        let d = { ...raw, id: crypto.randomUUID(), minis: [], uhrzeit: normalizeTime(raw.uhrzeit || "") };
-                        let currentAnlass = d.anlass || "Hl. Messe";
-                        let isValid = false;
+                        let d = { ...raw, id: crypto.randomUUID(), minis: [], uhrzeit: vm.normalizeTime(raw.uhrzeit || "") };
+                        let currentAnlass = d.anlass || "Hl. Messe"; let isValid = false;
                         if (["Hl. Messe", "Taufe", "Hochzeit", "Beerdigung", "Osternacht", "Christmette"].includes(currentAnlass)) isValid = true;
                         else {
                             let lower = currentAnlass.toLowerCase();
-                            if (lower.includes("taufe")) { currentAnlass = "Taufe"; isValid = true; }
-                            else if (lower.includes("hochzeit") || lower.includes("trauung")) { currentAnlass = "Hochzeit"; isValid = true; }
-                            else if (lower.includes("beerdigung")) { currentAnlass = "Beerdigung"; isValid = true; }
-                            else if (lower.includes("messe") || lower.includes("eucharistie") || lower.includes("hochamt")) { currentAnlass = "Hl. Messe"; isValid = true; }
-                            else if (lower.includes("osternacht")) { currentAnlass = "Osternacht"; isValid = true; }
-                            else if (lower.includes("christmette")) { currentAnlass = "Christmette"; isValid = true; }
-                            else if (lower.includes("gottesdienst")) isValid = true;
+                            if (lower.includes("taufe")) { currentAnlass = "Taufe"; isValid = true; } else if (lower.includes("hochzeit") || lower.includes("trauung")) { currentAnlass = "Hochzeit"; isValid = true; } else if (lower.includes("beerdigung")) { currentAnlass = "Beerdigung"; isValid = true; } else if (lower.includes("messe") || lower.includes("eucharistie") || lower.includes("hochamt")) { currentAnlass = "Hl. Messe"; isValid = true; } else if (lower.includes("osternacht")) { currentAnlass = "Osternacht"; isValid = true; } else if (lower.includes("christmette")) { currentAnlass = "Christmette"; isValid = true; } else if (lower.includes("gottesdienst")) isValid = true;
                         }
-                        if (isValid) {
-                            d.anlass = currentAnlass;
-                            let wId = getWeekIdentifier(d.datum);
-                            if (wochenGruppen[wId]) d.gruppe = wochenGruppen[wId];
-                            bereinigteDienste.push(d);
-                        }
+                        if (isValid) { d.anlass = currentAnlass; let wId = getWeekIdentifier(d.datum); if (wochenGruppen[wId]) d.gruppe = wochenGruppen[wId]; bereinigteDienste.push(d); }
                     });
                     vm.setDienste(bereinigteDienste); vm.setAppState('review');
                 } catch (e) { vm.setFehlerMeldung("KI Fehler: " + e.message); } finally { vm.setLaedt(false); }
@@ -605,81 +447,47 @@
             const teileEin = async () => {
                 vm.setLaedt(true); vm.setLadeStatusText("Berechne Einteilung...");
                 setTimeout(() => {
-                    let neueDienste = [...vm.dienste];
-                    let planMaxDate = null;
-
+                    let neueDienste = [...vm.dienste]; let planMaxDate = null;
                     neueDienste.forEach(d => {
-                        const parsedD = parseDateStr(d.datum);
+                        const parsedD = vm.parseDateStr(d.datum);
                         if (parsedD && (!planMaxDate || parsedD > planMaxDate)) planMaxDate = parsedD;
-
                         if(d.minis.length === 0 && !d.manuellerBedarf && !d.manuellerText) {
                             let woche = d.wochentag.toLowerCase();
                             let count = (woche.includes('sonntag') || woche.includes('feiertag')) ? vm.anzahlSonntags : vm.anzahlWerktags;
-                            
-                            // 1. Priorität: Feste Vormerkungen
-                            const matchV = vm.vormerkungen.find(v => v.datum === d.datum && (normalizeTime(v.uhrzeit) === normalizeTime(d.uhrzeit) || v.uhrzeit === "" || v.uhrzeit === "Ganztägig"));
-                            if (matchV) {
-                                d.minis = [...matchV.minis];
-                            } else {
-                                // 2. Priorität: Gruppe und Abwesenheiten abgleichen
+                            const matchV = vm.vormerkungen.find(v => v.datum === d.datum && (vm.normalizeTime(v.uhrzeit) === vm.normalizeTime(d.uhrzeit) || v.uhrzeit === "" || v.uhrzeit === "Ganztägig"));
+                            if (matchV) { d.minis = [...matchV.minis]; } else {
                                 let g = vm.gruppen.find(gr => gr.name === d.gruppe);
                                 if (g && g.mitglieder.length > 0) {
                                     let verfuegbare = g.mitglieder.filter(m => {
-                                        // Wöchentliche Abwesenheiten prüfen
                                         const regAbw = vm.regelmaessigeAbwesenheiten.find(ra => ra.name === m);
-                                        if (regAbw) {
-                                            const days = {'sonntag':1, 'montag':2, 'dienstag':3, 'mittwoch':4, 'donnerstag':5, 'freitag':6, 'samstag':7};
-                                            if (regAbw.wochentage.includes(days[woche])) return false;
-                                        }
-                                        // Einmalige Abwesenheiten prüfen
+                                        if (regAbw) { const days = {'sonntag':1, 'montag':2, 'dienstag':3, 'mittwoch':4, 'donnerstag':5, 'freitag':6, 'samstag':7}; if (regAbw.wochentage.includes(days[woche])) return false; }
                                         if (parsedD) {
-                                            const urlaub = vm.abwesenheiten.find(ab => {
-                                                if (ab.name !== m) return false;
-                                                const s = new Date(ab.start); const e = new Date(ab.end);
-                                                s.setHours(0,0,0,0); e.setHours(23,59,59,999);
-                                                return parsedD >= s && parsedD <= e;
-                                            });
+                                            const urlaub = vm.abwesenheiten.find(ab => { if (ab.name !== m) return false; const s = new Date(ab.start); const e = new Date(ab.end); s.setHours(0,0,0,0); e.setHours(23,59,59,999); return parsedD >= s && parsedD <= e; });
                                             if (urlaub) return false;
                                         }
                                         return true;
                                     });
                                     d.minis = verfuegbare.sort(() => 0.5 - Math.random()).slice(0, count);
-                                } else {
-                                    d.minis = [];
-                                }
+                                } else d.minis = [];
                             }
                         }
                     });
-
                     vm.setDienste(neueDienste);
-                    if (planMaxDate) {
-                        const maxIso = planMaxDate.toISOString().split('T')[0];
-                        if (!vm.planGeneriertBis || new Date(maxIso) > new Date(vm.planGeneriertBis)) {
-                            vm.setPlanGeneriertBis(maxIso);
-                        }
-                    }
+                    if (planMaxDate) { const maxIso = planMaxDate.toISOString().split('T')[0]; if (!vm.planGeneriertBis || new Date(maxIso) > new Date(vm.planGeneriertBis)) vm.setPlanGeneriertBis(maxIso); }
                     vm.setAppState('assigned'); vm.setLaedt(false);
                 }, 1500);
             };
 
             const exportierePDF = () => {
-                const { jsPDF } = window.jspdf;
-                const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-                let currentY_mm = 20;
-                doc.setFontSize(22); doc.setFont("helvetica", "bold");
-                doc.text("Einteilung der Messdiener/innen", 105, currentY_mm, { align: "center" });
-                currentY_mm += 15;
-                for (const block of getChronologischeBloecke()) {
+                const { jsPDF } = window.jspdf; const doc = new jsPDF({ unit: 'mm', format: 'a4' }); let currentY_mm = 20;
+                doc.setFontSize(22); doc.setFont("helvetica", "bold"); doc.text("Einteilung der Messdiener/innen", 105, currentY_mm, { align: "center" }); currentY_mm += 15;
+                for (const block of bloecke) {
                     if (currentY_mm + 20 > 280) { doc.addPage(); currentY_mm = 20; }
-                    doc.setFontSize(14); doc.setFont("helvetica", "bold");
-                    doc.text(`Gruppe ${block.gruppe.replace(/Gruppe/i, '').trim()}`, 105, currentY_mm, { align: "center" });
-                    currentY_mm += 8;
+                    doc.setFontSize(14); doc.setFont("helvetica", "bold"); doc.text(`Gruppe ${block.gruppe.replace(/Gruppe/i, '').trim()}`, 105, currentY_mm, { align: "center" }); currentY_mm += 8;
                     for (const dienst of block.dienste) {
                         if (currentY_mm + 15 > 280) { doc.addPage(); currentY_mm = 20; }
-                        doc.setFontSize(12); doc.setFont("helvetica", "bold");
-                        let t = dienst.uhrzeit.replace(/h/i, '').trim(); if(!t.toLowerCase().endsWith("uhr")) t+=" Uhr";
-                        doc.text(`${dienst.wochentag} ${dienst.datum} ${dienst.anlass} ${t}`, 20, currentY_mm);
-                        currentY_mm += 6;
+                        doc.setFontSize(12); doc.setFont("helvetica", "bold"); let t = dienst.uhrzeit.replace(/h/i, '').trim(); if(!t.toLowerCase().endsWith("uhr")) t+=" Uhr";
+                        doc.text(`${dienst.wochentag} ${dienst.datum} ${dienst.anlass} ${t}`, 20, currentY_mm); currentY_mm += 6;
                         doc.setFont("helvetica", "normal");
                         if (dienst.manuellerText) { doc.text(dienst.manuellerText, 20, currentY_mm); currentY_mm += 6; }
                         else if (dienst.manuellerBedarf) { doc.text(`Es werden ${dienst.manuellerBedarf} benötigt.`, 20, currentY_mm); currentY_mm += 6; }
@@ -690,103 +498,6 @@
                 }
                 doc.save("Messdienerplan.pdf");
             };
-
-            return { getChronologischeBloecke, leseGottesdienste, teileEin, exportierePDF };
-        }
-
-        // ==========================================
-        // 5. ADMIN SETUP & SIDEBAR
-        // ==========================================
-        function AdminSetupOverlay() {
-            const vm = useViewModel();
-            const [proj, setProj] = useState("");
-            const [key, setKey] = useState("");
-            return (
-                <div className="fixed inset-0 z-[100] bg-[#ececec] flex items-center justify-center p-4">
-                    <div className="bg-white p-10 rounded-3xl shadow-xl max-w-md w-full text-center relative">
-                        <button onClick={() => vm.setRoute('landing')} className="absolute top-6 left-6 text-gray-400 hover:text-gray-800"><i className="fa-solid fa-arrow-left text-xl"></i></button>
-                        <i className="fa-solid fa-database text-5xl text-blue-500 mb-6 mt-4"></i>
-                        <h2 className="text-2xl font-bold text-gray-900 mb-2">Ersteinrichtung</h2>
-                        <p className="text-gray-500 mb-6">Bitte gib die Zugangsdaten für die Datenbank ein.</p>
-                        <input type="text" value={proj} onChange={e=>setProj(e.target.value)} placeholder="Firebase Projekt ID..." className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-4 outline-none focus:border-blue-500 text-center" />
-                        <input type="password" value={key} onChange={e=>setKey(e.target.value)} placeholder="Gemini API Key..." className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-6 outline-none focus:border-blue-500 text-center" />
-                        <button disabled={!proj.trim() || !key.trim()} onClick={() => { vm.setFirebaseProjectId(proj.trim()); vm.setApiKey(key.trim()); }} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-lg py-3 rounded-xl transition">Speichern & Starten</button>
-                    </div>
-                </div>
-            );
-        }
-
-        function MobileTopBar({ title }) {
-            const vm = useViewModel();
-            return (
-                <div className="md:hidden bg-white text-gray-900 p-4 pt-10 flex items-center shadow-sm sticky top-0 z-50 border-b border-gray-200">
-                    <button onClick={() => vm.setActiveTab('menu')} className="text-blue-600 hover:text-blue-800 p-2 pl-0"><i className="fa-solid fa-chevron-left text-xl mr-1"></i> Menü</button>
-                    <h1 className="text-xl font-bold ml-2 flex-1 truncate">{title}</h1>
-                </div>
-            );
-        }
-
-        function Sidebar() {
-            const { activeTab, setActiveTab } = useViewModel();
-            const menuItems = [
-                { section: "Arbeitsbereich", items: [
-                    { id: 'planer', label: 'Planer', icon: 'fa-regular fa-file-lines' },
-                    { id: 'prozessionen', label: 'Prozessionen', icon: 'fa-solid fa-person-walking' },
-                    { id: 'events', label: 'Events & Aktionen', icon: 'fa-solid fa-champagne-glasses' },
-                    { id: 'vormerken', label: 'Vormerken', icon: 'fa-regular fa-calendar-check' },
-                    { id: 'statistik', label: 'Statistik', icon: 'fa-solid fa-chart-column' },
-                    { id: 'notizen', label: 'Notizen', icon: 'fa-regular fa-note-sticky' },
-                    { id: 'werkzeuge', label: 'Werkzeuge', icon: 'fa-solid fa-screwdriver-wrench' }
-                ]},
-                { section: "Konfiguration", items: [
-                    { id: 'messdiener', label: 'Messdiener & Gruppen', icon: 'fa-solid fa-user-group' },
-                    { id: 'einstellungen', label: 'Einstellungen', icon: 'fa-solid fa-gear' }
-                ]}
-            ];
-            return (
-                <div className="w-[260px] h-full bg-[#f5f5f5] border-r border-gray-300 flex flex-col select-none z-20 shrink-0">
-                    <div className="p-4 pt-10 pb-6 text-xl font-bold text-gray-800 ml-2">Messdiener Planer</div>
-                    <div className="flex-1 overflow-y-auto px-3">
-                        {menuItems.map((section, sIdx) => (
-                            <div key={sIdx} className="mb-6">
-                                <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2 ml-2">{section.section}</h3>
-                                <ul className="space-y-1">
-                                    {section.items.map(item => (
-                                        <li key={item.id}>
-                                            <button onClick={() => setActiveTab(item.id)} className={`w-full flex items-center px-3 py-2 rounded-lg transition text-[14px] font-medium ${activeTab === item.id ? 'bg-[#007aff] text-white shadow-sm' : 'text-gray-700 hover:bg-gray-200'}`}>
-                                                <i className={`${item.icon} w-5 text-center ${activeTab === item.id ? 'text-white' : 'text-blue-500'}`}></i><span className="ml-2">{item.label}</span>
-                                            </button>
-                                        </li>
-                                    ))}
-                                </ul>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            );
-        }
-
-        // ==========================================
-        // 6. ADMIN VIEWS
-        // ==========================================
-
-        function DienstKarte({ dienst, isAssignedPhase }) {
-            return (
-                <div className="bg-white rounded-2xl p-5 shadow-[0_4px_15px_rgba(0,0,0,0.04)] border border-gray-100">
-                    <div className="flex justify-between items-start mb-2"><div><p className="text-blue-500 font-bold text-xs md:text-sm">{dienst.wochentag}, {dienst.datum}</p><p className="text-2xl md:text-3xl font-black tracking-tight mt-1 text-gray-800">{dienst.uhrzeit}</p></div></div>
-                    <p className="text-gray-500 font-medium text-sm md:text-base line-clamp-2">{dienst.anlass}</p>
-                    <hr className="my-3 border-gray-100" />
-                    {isAssignedPhase ? (
-                        <div className="space-y-1 md:space-y-2 min-h-[30px]">{dienst.manuellerText ? <p className="text-red-500 font-medium text-sm">{dienst.manuellerText}</p> : dienst.manuellerBedarf ? <p className="text-red-500 font-medium text-sm">Es werden {dienst.manuellerBedarf} Minis benötigt.</p> : dienst.minis.length === 0 ? <p className="text-red-500 font-bold">-</p> : dienst.minis.map(m => (<div key={m} className="flex items-center space-x-2"><i className="fa-solid fa-user text-gray-400 text-xs"></i><span className="font-semibold text-gray-800 text-sm md:text-base">{m}</span></div>))}</div>
-                    ) : <p className="text-gray-400 text-xs md:text-sm italic">Wird festgelegt</p>}
-                </div>
-            );
-        }
-
-        function PlanerView() {
-            const vm = useViewModel();
-            const { getChronologischeBloecke, leseGottesdienste, teileEin, exportierePDF } = usePlanerLogic(vm);
-            const bloecke = getChronologischeBloecke();
 
             return (
                 <div className="flex flex-col md:flex-row h-full w-full">
@@ -831,7 +542,7 @@
                             <div className="h-full flex flex-col justify-center items-center text-gray-400 py-20"><i className="fa-solid fa-inbox text-5xl md:text-7xl mb-4 opacity-50"></i><p className="text-lg md:text-xl font-medium text-center">Hier erscheinen die Termine.</p></div>
                         ) : (
                             <div className="max-w-6xl mx-auto pb-20">
-                                <h1 className="text-2xl md:text-4xl font-extrabold text-gray-900 mb-6 hidden md:block">Gottesdienste</h1>
+                                <h1 className="text-2xl md:text-4xl font-extrabold text-gray-900 mb-6 md:mb-10 hidden md:block">Gottesdienste</h1>
                                 {bloecke.map((block, idx) => (
                                     <div key={idx} className="mb-8 md:mb-12">
                                         <div className="flex items-center space-x-2 mb-4 md:mb-6">
@@ -841,7 +552,19 @@
                                             </select>
                                         </div>
                                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                                            {block.dienste.map(d => <DienstKarte key={d.id} dienst={d} isAssignedPhase={vm.appState === 'assigned'} />)}
+                                            {block.dienste.map(d => (
+                                                <div key={d.id} className="bg-white rounded-2xl p-5 shadow-[0_4px_15px_rgba(0,0,0,0.04)] border border-gray-100">
+                                                    <p className="text-blue-500 font-bold text-xs md:text-sm">{d.wochentag}, {d.datum}</p>
+                                                    <p className="text-2xl md:text-3xl font-black tracking-tight mt-1 text-gray-800">{d.uhrzeit}</p>
+                                                    <p className="text-gray-500 font-medium text-sm md:text-base line-clamp-2 mt-2">{d.anlass}</p>
+                                                    <hr className="my-3 border-gray-100" />
+                                                    {vm.appState === 'assigned' ? (
+                                                        <div className="space-y-1 md:space-y-2 min-h-[30px]">
+                                                            {d.minis.length === 0 ? <p className="text-red-500 font-bold">-</p> : d.minis.map(m => <div key={m} className="flex items-center space-x-2"><i className="fa-solid fa-user text-gray-400 text-xs"></i><span className="font-semibold text-gray-800 text-sm md:text-base">{m}</span></div>)}
+                                                        </div>
+                                                    ) : <p className="text-gray-400 text-xs md:text-sm italic">Wird festgelegt</p>}
+                                                </div>
+                                            ))}
                                         </div>
                                     </div>
                                 ))}
@@ -894,7 +617,7 @@
             const vm = useViewModel();
             const [editVormerk, setEditVormerk] = useState(null);
             const wochentage = [{id: 2, n: 'Mo'}, {id: 3, n: 'Di'}, {id: 4, n: 'Mi'}, {id: 5, n: 'Do'}, {id: 6, n: 'Fr'}, {id: 7, n: 'Sa'}, {id: 1, n: 'So'}];
-            const sorted = [...vm.vormerkungen].sort((a, b) => (parseDateStr(a.datum)||0) - (parseDateStr(b.datum)||0));
+            const sorted = [...vm.vormerkungen].sort((a, b) => (vm.parseDateStr(a.datum)||0) - (vm.parseDateStr(b.datum)||0));
             return (
                 <div className="h-full flex flex-col">
                     <MobileTopBar title="Vormerken" />
@@ -1089,7 +812,7 @@
         function ProzessionenView() {
             const vm = useViewModel();
             const [selectedId, setSelectedId] = useState(null);
-            const sorted = [...vm.prozessionen].sort((a, b) => (parseDateStr(a.datum)||0) - (parseDateStr(b.datum)||0));
+            const sorted = [...vm.prozessionen].sort((a, b) => (vm.parseDateStr(a.datum)||0) - (vm.parseDateStr(b.datum)||0));
 
             return (
                 <div className="flex flex-col md:flex-row h-full w-full">
@@ -1152,7 +875,7 @@
         function EventsView() {
             const vm = useViewModel();
             const [selectedId, setSelectedId] = useState(null);
-            const sorted = [...vm.events].sort((a, b) => (parseDateStr(a.datum)||0) - (parseDateStr(b.datum)||0));
+            const sorted = [...vm.events].sort((a, b) => (vm.parseDateStr(a.datum)||0) - (vm.parseDateStr(b.datum)||0));
             return (
                 <div className="flex flex-col md:flex-row h-full w-full">
                     <MobileTopBar title="Events" />
@@ -1197,6 +920,7 @@
                             <div className="hidden md:block mb-8"><h1 className="text-3xl font-bold text-gray-900">Einstellungen</h1></div>
                             <SectionBox icon="fa-solid fa-cloud text-blue-500" title="Cloud Synchronisation">
                                 <input type="text" placeholder="Firebase Projekt-ID (z.B. messdienerplan-b8c62)" className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 mb-4 outline-none" value={vm.firebaseProjectId} onChange={e => vm.setFirebaseProjectId(e.target.value)} />
+                                <button onClick={vm.syncStatistikToFirebase} className="bg-gray-100 px-4 py-2 rounded-lg text-sm font-bold border border-gray-300"><i className="fa-solid fa-arrow-rotate-right mr-2"></i>Jetzt manuell synchronisieren</button>
                             </SectionBox>
                             <SectionBox icon="fa-solid fa-brain text-purple-500" title="KI & Sicherheit">
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
@@ -1282,7 +1006,7 @@
         }
 
         // ==========================================
-        // 3. MAIN APP ROUTER
+        // 8. MAIN APP ROUTER
         // ==========================================
         function App() {
             const vm = useViewModel();
@@ -1296,10 +1020,13 @@
                 );
             }
 
-            // Router
-            if (vm.route === 'abwesenheiten') return <AbwesenheitenPortal />;
+            if (vm.route === 'admin') {
+                if (!vm.apiKey || !vm.firebaseProjectId) return <AdminSetupOverlay />;
+                return <AdminApp />;
+            }
+
             if (vm.route === 'pfarrbuero') return <PfarrbueroView />;
-            if (vm.route === 'admin') return <AdminApp />;
+            if (vm.route === 'abwesenheiten') return <AbwesenheitenPortal />;
             
             return <LandingPage />;
         }
