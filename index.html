@@ -97,7 +97,6 @@
             const [prozessionen, setProzessionen] = useAppStorage('prozessionenData', []);
             const [pdfFile, setPdfFile] = useState(null);
 
-            // Auto-Login über URL Parameter
             useEffect(() => { const urlParams = new URLSearchParams(window.location.search); const projectId = urlParams.get('id'); if (projectId && projectId.length > 5) setFirebaseProjectId(projectId.trim()); }, []);
 
             const getFbUrl = (docName) => `https://firestore.googleapis.com/v1/projects/${firebaseProjectId.trim()}/databases/(default)/documents/messdiener/${docName}`;
@@ -116,14 +115,14 @@
                     await fetchDoc('prozessionen', f => { if(f.prozessionenJson) setProzessionen(JSON.parse(f.prozessionenJson.stringValue)); }, f=>f);
                     await fetchDoc('notizen', f => { if(f.notizenJson) setNotizen(JSON.parse(f.notizenJson.stringValue)); }, f=>f);
                     
-                    // Zieht automatisch den aktuellen Plan (z.B. aus der Mac App)
+                    // Zieht automatisch den aktuellen Plan aus der Firebase (z.B. von Mac App)
                     await fetchDoc('aktuellerPlan', f => { 
                         if(f.planDataJson) { 
                             const parsed = JSON.parse(f.planDataJson.stringValue);
                             if(parsed && parsed.length > 0) {
                                 const nurGottesdienste = parsed.filter(item => item.art === 'gottesdienst').map(d => ({
                                     id: crypto.randomUUID(), datum: d.datum || "", wochentag: d.wochentag || "", uhrzeit: d.uhrzeit || "",
-                                    anlass: d.typ || "Hl. Messe", gruppe: "A", minis: d.messdiener && d.messdiener !== "-" ? d.messdiener.split(',').map(n=>n.trim()) : [],
+                                    anlass: d.typ || "Hl. Messe", gruppe: d.gruppe || "A", minis: d.messdiener && d.messdiener !== "-" ? d.messdiener.split(',').map(n=>n.trim()) : [],
                                     manuellerBedarf: d.manuellerBedarf || null, manuellerText: d.manuellerText || null, isFromPfarrbuero: false
                                 }));
                                 if (nurGottesdienste.length > 0 && appState === 'upload') {
@@ -151,7 +150,6 @@
 
             const alleMinis = gruppen.flatMap(g => g.mitglieder).sort();
 
-            // Globale Helper FÜR ALLE VIEWS ZUGÄNGLICH MACHEN (VERHINDERT ABSTÜRZE!)
             const parseDateStr = (str) => { if (!str) return null; const parts = str.match(/\d+/g); if (!parts || parts.length < 2) return null; return new Date(parts.length >= 3 ? parseInt(parts[2]) : new Date().getFullYear(), parseInt(parts[1]) - 1, parseInt(parts[0])); };
             const normalizeTime = (time) => { if(!time) return ""; let clean = time.replace(/h/gi, '').replace(/uhr/gi, '').trim(); let parts = clean.split(/[:.]/); if (parts.length === 2) return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.${parts[1].length === 1 ? `${parts[1]}0` : (parts[1] === "" ? "00" : parts[1])}`; else if (parts.length === 1 && parts[0] !== "") return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.00`; return time; };
 
@@ -164,14 +162,14 @@
                 vormerkungen, setVormerkungen, regelmaessigeAbwesenheiten, setRegelmaessigeAbwesenheiten,
                 abwesenheiten, setAbwesenheiten, notizen, setNotizen, events, setEvents, prozessionen, setProzessionen,
                 pdfFile, setPdfFile, alleMinis, syncDoc, syncStatistikToFirebase,
-                parseDateStr, normalizeTime // WICHTIG: Jetzt sind sie global verfügbar!
+                parseDateStr, normalizeTime
             };
             return <ViewModelContext.Provider value={value}>{children}</ViewModelContext.Provider>;
         }
         const useViewModel = () => useContext(ViewModelContext);
 
         // ==========================================
-        // 2. LANDING PAGE & PORTALE
+        // 2. LANDING PAGE & SETUP
         // ==========================================
         function AdminSetupOverlay() {
             const vm = useViewModel();
@@ -252,15 +250,9 @@
                             <h1 className="text-4xl md:text-5xl font-black text-gray-900 mb-2 tracking-tight">Messdienerplan</h1>
                             <h2 className="text-2xl font-bold text-blue-600 mb-12">Thalau</h2>
                             <div className="w-full space-y-4 px-2 md:px-4">
-                                <button onClick={() => { if(vm.adminPassword && vm.adminPassword === vm.cloudAdminPassword && vm.cloudAdminPassword !== '') vm.setRoute('admin'); else setShowAdminLogin(true); }} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-lg md:text-xl py-4 rounded-2xl shadow-lg transition flex items-center justify-center">
-                                    <i className="fa-solid fa-desktop mr-3"></i>Planer öffnen
-                                </button>
-                                <button onClick={() => { if(vm.cloudPfarrbueroPassword && vm.pfarrbueroPassword !== vm.cloudPfarrbueroPassword) setShowPbLogin(true); else vm.setRoute('pfarrbuero'); }} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center">
-                                    <i className="fa-solid fa-calendar-check mr-3"></i>Messdiener Vormerken
-                                </button>
-                                <button onClick={() => vm.setRoute('abwesenheiten')} className="w-full bg-red-100 hover:bg-red-200 text-red-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center">
-                                    <i className="fa-solid fa-user-clock mr-3"></i>Abwesenheiten eintragen
-                                </button>
+                                <button onClick={() => { if(vm.adminPassword && vm.adminPassword === vm.cloudAdminPassword && vm.cloudAdminPassword !== '') vm.setRoute('admin'); else setShowAdminLogin(true); }} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-lg md:text-xl py-4 rounded-2xl shadow-lg transition flex items-center justify-center"><i className="fa-solid fa-desktop mr-3"></i>Planer öffnen</button>
+                                <button onClick={() => { if(vm.cloudPfarrbueroPassword && vm.pfarrbueroPassword !== vm.cloudPfarrbueroPassword) setShowPbLogin(true); else vm.setRoute('pfarrbuero'); }} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center"><i className="fa-solid fa-calendar-check mr-3"></i>Messdiener Vormerken</button>
+                                <button onClick={() => vm.setRoute('abwesenheiten')} className="w-full bg-red-100 hover:bg-red-200 text-red-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center"><i className="fa-solid fa-user-clock mr-3"></i>Abwesenheiten eintragen</button>
                             </div>
                         </div>
                     </div>
@@ -335,7 +327,7 @@
                 const parts = datum.split('-'); let wt = "Sonntag";
                 if(parts.length === 3) { const d = new Date(parts[0], parts[1]-1, parts[2]); const days = ['Sonntag','Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag']; wt = days[d.getDay()]; }
                 const formattedDate = parts.length === 3 ? `${parts[2]}.${parts[1]}.${parts[0]}` : datum;
-                vm.setVormerkungen([...vm.vormerkungen, { id: crypto.randomUUID(), datum: formattedDate, wochentag: wt, uhrzeit: uhrzeit, anlass: anlass || "Gottesdienst", minis: minis.filter(m => m.trim() !== "" && vm.alleMinis.includes(m.trim())), isFromPfarrbuero: true }]);
+                vm.setVormerkungen([...(vm.vormerkungen||[]), { id: crypto.randomUUID(), datum: formattedDate, wochentag: wt, uhrzeit: uhrzeit, anlass: anlass || "Gottesdienst", minis: minis.filter(m => m.trim() !== "" && vm.alleMinis.includes(m.trim())), isFromPfarrbuero: true }]);
                 alert("Erfolgreich vorgemerkt!"); setDatum(''); setAnlass(''); setUhrzeit(''); setMinis([""]); vm.setRoute('landing');
             };
 
@@ -357,14 +349,9 @@
             );
         }
 
-        // ==========================================
-        // 3. ADMIN VIEWS
-        // ==========================================
         function MobileTopBar({ title }) {
             const vm = useViewModel();
-            return (
-                <div className="md:hidden bg-white text-gray-900 p-4 pt-10 flex items-center shadow-sm sticky top-0 z-50 border-b border-gray-200"><button onClick={() => vm.setActiveTab('menu')} className="text-blue-600 hover:text-blue-800 p-2 pl-0"><i className="fa-solid fa-chevron-left text-xl mr-1"></i> Menü</button><h1 className="text-xl font-bold ml-2 flex-1 truncate">{title}</h1></div>
-            );
+            return <div className="md:hidden bg-white text-gray-900 p-4 pt-10 flex items-center shadow-sm sticky top-0 z-50 border-b border-gray-200"><button onClick={() => vm.setActiveTab('menu')} className="text-blue-600 hover:text-blue-800 p-2 pl-0"><i className="fa-solid fa-chevron-left text-xl mr-1"></i> Menü</button><h1 className="text-xl font-bold ml-2 flex-1 truncate">{title}</h1></div>;
         }
 
         function Sidebar() {
@@ -449,15 +436,19 @@
 
             const getChronologischeBloecke = () => {
                 let bloecke = []; let currentWeek = null; let currentDienste = [];
-                const sorted = [...(vm.dienste || [])].sort((a, b) => { const d1 = vm.parseDateStr(a.datum) || new Date(0); const d2 = vm.parseDateStr(b.datum) || new Date(0); if (d1.getTime() === d2.getTime()) return vm.normalizeTime(a.uhrzeit).localeCompare(vm.normalizeTime(b.uhrzeit)); return d1 - d2; });
+                const sorted = [...(vm.dienste || [])].sort((a, b) => { 
+                    const da = vm.parseDateStr(a.datum); const db = vm.parseDateStr(b.datum); 
+                    const tA = da ? da.getTime() : 0; const tB = db ? db.getTime() : 0;
+                    if (tA === tB) return vm.normalizeTime(a.uhrzeit).localeCompare(vm.normalizeTime(b.uhrzeit)); return tA - tB; 
+                });
                 for (let dienst of sorted) {
                     const w = getWeekIdentifier(dienst.datum);
                     if (w !== currentWeek) {
-                        if (currentWeek !== null) { let counts = {}; currentDienste.forEach(d => { if (d.gruppe && d.gruppe !== "Z") counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; }); bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : (vm.gruppen[0]?.name || "A"), dienste: currentDienste }); }
+                        if (currentWeek !== null) { let counts = {}; currentDienste.forEach(d => { if (d.gruppe && d.gruppe !== "Z") counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; }); bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : ((vm.gruppen||[])[0]?.name || "A"), dienste: currentDienste }); }
                         currentWeek = w; currentDienste = [dienst];
                     } else currentDienste.push(dienst);
                 }
-                if (currentWeek !== null) { let counts = {}; currentDienste.forEach(d => { if (d.gruppe && d.gruppe !== "Z") counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; }); bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : (vm.gruppen[0]?.name || "A"), dienste: currentDienste }); }
+                if (currentWeek !== null) { let counts = {}; currentDienste.forEach(d => { if (d.gruppe && d.gruppe !== "Z") counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; }); bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : ((vm.gruppen||[])[0]?.name || "A"), dienste: currentDienste }); }
                 return bloecke;
             };
 
@@ -479,8 +470,8 @@
                     
                     let wochenGruppen = {}; rawDienste.forEach(d => { if (d.gruppe) wochenGruppen[getWeekIdentifier(d.datum)] = d.gruppe.replace(/Gruppe/i, '').trim(); });
                     let alleWochen = [...new Set(rawDienste.map(d => getWeekIdentifier(d.datum)))].sort();
-                    let aktuelleGruppe = vm.gruppen[0]?.name || "A"; if (alleWochen.length > 0 && wochenGruppen[alleWochen[0]]) aktuelleGruppe = wochenGruppen[alleWochen[0]];
-                    const gruppenNamen = (vm.gruppen || []).map(g => g.name);
+                    let aktuelleGruppe = (vm.gruppen||[])[0]?.name || "A"; if (alleWochen.length > 0 && wochenGruppen[alleWochen[0]]) aktuelleGruppe = wochenGruppen[alleWochen[0]];
+                    const gruppenNamen = (vm.gruppen||[]).map(g => g.name);
                     alleWochen.forEach(woche => { if (wochenGruppen[woche]) aktuelleGruppe = wochenGruppen[woche]; wochenGruppen[woche] = aktuelleGruppe; aktuelleGruppe = gruppenNamen[(gruppenNamen.indexOf(aktuelleGruppe) + 1) % gruppenNamen.length]; });
 
                     let bereinigteDienste = [];
@@ -498,22 +489,22 @@
             const teileEin = async () => {
                 vm.setLaedt(true); vm.setLadeStatusText("Berechne Einteilung...");
                 setTimeout(() => {
-                    let neueDienste = [...(vm.dienste || [])]; let planMaxDate = null;
+                    let neueDienste = [...(vm.dienste||[])]; let planMaxDate = null;
                     neueDienste.forEach(d => {
                         const parsedD = vm.parseDateStr(d.datum); if (parsedD && (!planMaxDate || parsedD > planMaxDate)) planMaxDate = parsedD;
-                        if((d.minis || []).length === 0 && !d.manuellerBedarf && !d.manuellerText) {
-                            let woche = d.wochentag.toLowerCase();
+                        if((d.minis||[]).length === 0 && !d.manuellerBedarf && !d.manuellerText) {
+                            let woche = (d.wochentag||"").toLowerCase();
                             let count = (woche.includes('sonntag') || woche.includes('feiertag')) ? vm.anzahlSonntags : vm.anzahlWerktags;
                             
-                            const matchV = (vm.vormerkungen || []).find(v => v.datum === d.datum && (vm.normalizeTime(v.uhrzeit) === vm.normalizeTime(d.uhrzeit) || v.uhrzeit === "" || v.uhrzeit === "Ganztägig"));
-                            if (matchV) { d.minis = [...matchV.minis]; d.isFromPfarrbuero = matchV.isFromPfarrbuero || false; } 
+                            const matchV = (vm.vormerkungen||[]).find(v => v.datum === d.datum && (vm.normalizeTime(v.uhrzeit) === vm.normalizeTime(d.uhrzeit) || v.uhrzeit === "" || v.uhrzeit === "Ganztägig"));
+                            if (matchV) { d.minis = [...(matchV.minis||[])]; d.isFromPfarrbuero = matchV.isFromPfarrbuero || false; } 
                             else {
-                                let g = (vm.gruppen || []).find(gr => gr.name === d.gruppe);
+                                let g = (vm.gruppen||[]).find(gr => gr.name === d.gruppe);
                                 if (g && g.mitglieder && g.mitglieder.length > 0) {
                                     let verfuegbare = g.mitglieder.filter(m => {
-                                        const regAbw = (vm.regelmaessigeAbwesenheiten || []).find(ra => ra.name === m);
+                                        const regAbw = (vm.regelmaessigeAbwesenheiten||[]).find(ra => ra.name === m);
                                         if (regAbw && parsedD) { if (regAbw.wochentage.includes(parsedD.getDay() === 0 ? 1 : parsedD.getDay() + 1)) return false; } 
-                                        if (parsedD) { const urlaub = (vm.abwesenheiten || []).find(ab => { if (ab.name !== m) return false; const s = new Date(ab.start); const e = new Date(ab.end); s.setHours(0,0,0,0); e.setHours(23,59,59,999); return parsedD >= s && parsedD <= e; }); if (urlaub) return false; }
+                                        if (parsedD) { const urlaub = (vm.abwesenheiten||[]).find(ab => { if (ab.name !== m) return false; const s = new Date(ab.start); const e = new Date(ab.end); s.setHours(0,0,0,0); e.setHours(23,59,59,999); return parsedD >= s && parsedD <= e; }); if (urlaub) return false; }
                                         return true;
                                     });
                                     d.minis = verfuegbare.sort(() => 0.5 - Math.random()).slice(0, count);
@@ -526,21 +517,19 @@
                     vm.setAppState('assigned'); vm.setLaedt(false);
                     
                     const planForCloud = neueDienste.map(d => ({ art: 'gottesdienst', wochentag: d.wochentag, datum: d.datum, typ: d.anlass, uhrzeit: d.uhrzeit, messdiener: (d.minis||[]).join(', ') || "-" }));
-                    if (vm.firebaseProjectId) {
-                        vm.syncDoc('aktuellerPlan', { planDataJson: { stringValue: JSON.stringify(planForCloud) }, timestamp: { stringValue: Date.now().toString() } });
-                    }
+                    if (vm.firebaseProjectId) vm.syncDoc('aktuellerPlan', { planDataJson: { stringValue: JSON.stringify(planForCloud) }, timestamp: { stringValue: Date.now().toString() } });
                 }, 1500);
             };
 
             const exportierePDF = async () => {
-                const { jsPDF } = window.jspdf; const doc = new jsPDF({ unit: 'mm', format: 'a4' }); let y = 20; const margin = 20;
+                const { jsPDF } = window.jspdf; const doc = new jsPDF({ unit: 'mm', format: 'a4' }); let y = 12; const margin = 20;
                 
                 try {
                     const img = new Image(); img.crossOrigin = "Anonymous"; img.src = 'icon.png';
                     await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
                     const canvas = document.createElement('canvas'); canvas.width = img.width; canvas.height = img.height; canvas.getContext('2d').drawImage(img, 0, 0);
-                    doc.addImage(canvas.toDataURL('image/png'), 'PNG', 88, y, 34, 34); y += 45; 
-                } catch (e) { console.log("Kein Logo gefunden."); }
+                    doc.addImage(canvas.toDataURL('image/png'), 'PNG', 88, y, 34, 34); y += 42; 
+                } catch (e) { console.log("Kein Logo gefunden."); y = 20; }
 
                 doc.setFontSize(22); doc.setFont("helvetica", "bold"); doc.text("Einteilung der Messdiener/innen", 105, y, { align: "center" }); y += 16;
                 const bloecke = getChronologischeBloecke();
@@ -668,7 +657,7 @@
                                         <div className="flex items-center mb-4">
                                             <select className="bg-transparent text-xl font-bold text-gray-900 outline-none cursor-pointer" value={block.gruppe} onChange={(e) => { const newG = e.target.value; vm.setDienste(vm.dienste.map(d => block.dienste.find(bd => bd.id === d.id) ? {...d, gruppe: newG} : d)); }}>
                                                 <option value="Ohne Gruppe">Nicht zugeordnet</option>
-                                                {(vm.gruppen || []).map(g => <option key={g.name} value={g.name}>Gruppe {g.name}</option>)}
+                                                {(vm.gruppen||[]).map(g => <option key={g.name} value={g.name}>Gruppe {g.name}</option>)}
                                             </select>
                                         </div>
                                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -689,7 +678,8 @@
         function ProzessionenView() {
             const vm = useViewModel();
             const [selectedId, setSelectedId] = useState(null);
-            const sorted = [...(vm.prozessionen || [])].sort((a, b) => (vm.parseDateStr(a.datum)||0) - (vm.parseDateStr(b.datum)||0));
+            
+            const sorted = [...(vm.prozessionen||[])].sort((a, b) => { const da = vm.parseDateStr(a.datum); const db = vm.parseDateStr(b.datum); return (da ? da.getTime() : 0) - (db ? db.getTime() : 0); });
 
             const exportiereProzession = (proz) => {
                 const { jsPDF } = window.jspdf; const doc = new jsPDF(); let y = 20;
@@ -697,25 +687,34 @@
                 doc.setFontSize(14); doc.setFont("helvetica", "normal"); doc.setTextColor(100, 100, 100); doc.text(proz.datum || "Kein Datum", 105, y, { align: "center" }); y += 20;
                 doc.setTextColor(0, 0, 0); doc.setFontSize(12);
                 const addLine = (label, val1, val2 = null) => { doc.setFont("helvetica", "bold"); doc.text(label + ":", 20, y); doc.setFont("helvetica", "normal"); if (val2 !== null) { doc.text(`${val1 || '-'}  |  ${val2 || '-'}`, 65, y); } else { doc.text(val1 || '-', 65, y); } y += 8; };
-                addLine("Kreuz", proz.kreuz); y += 2; addLine("Fahnen (Grün)", proz.fahneGruenWeiss[0], proz.fahneGruenWeiss[1]);
+                
+                const fg = Array.isArray(proz.fahneGruenWeiss) ? proz.fahneGruenWeiss : ["",""];
+                const fge = Array.isArray(proz.fahneGelbWeiss1) ? proz.fahneGelbWeiss1 : ["",""];
+                const fl = Array.isArray(proz.flambeaux) ? proz.flambeaux : ["",""];
+                const gb = Array.isArray(proz.gabenbereitung) ? proz.gabenbereitung : ["",""];
+                const kf = Array.isArray(proz.kinderfahnen) ? proz.kinderfahnen : ["",""];
+                const ko = Array.isArray(proz.kollekte) ? proz.kollekte : ["",""];
+                const frw = Array.isArray(proz.fahneRotWeiss2) ? proz.fahneRotWeiss2 : ["",""];
+
+                addLine("Kreuz", proz.kreuz); y += 2; addLine("Fahnen (Grün)", fg[0], fg[1]);
                 y += 6; doc.setFontSize(10); doc.setTextColor(150,150,150); doc.text("--- Männer ---", 105, y, {align:"center"}); y+=6; doc.setFontSize(12); doc.setTextColor(0,0,0);
-                addLine("Fahnen (Gelb)", proz.fahneGelbWeiss1[0], proz.fahneGelbWeiss1[1]);
+                addLine("Fahnen (Gelb)", fge[0], fge[1]);
                 y += 6; doc.setFontSize(10); doc.setTextColor(150,150,150); doc.text("--- Musikverein ---", 105, y, {align:"center"}); y+=6; doc.setFontSize(12); doc.setTextColor(0,0,0);
-                addLine("Flambeaux", proz.flambeaux[0], proz.flambeaux[1]); addLine("Gabenbereitung", proz.gabenbereitung[0], proz.gabenbereitung[1]);
+                addLine("Flambeaux", fl[0], fl[1]); addLine("Gabenbereitung", gb[0], gb[1]);
                 y += 6; doc.setFontSize(10); doc.setTextColor(150,150,150); doc.text("--- Kommunionkinder ---", 105, y, {align:"center"}); y+=6; doc.setFontSize(12); doc.setTextColor(0,0,0);
-                addLine("Kinderfahnen", proz.kinderfahnen[0], proz.kinderfahnen[1]); addLine("Weihrauch", proz.weihrauch); addLine("Schiffchen", proz.schiffchen);
+                addLine("Kinderfahnen", kf[0], kf[1]); addLine("Weihrauch", proz.weihrauch); addLine("Schiffchen", proz.schiffchen);
                 y += 6; doc.setFontSize(10); doc.setTextColor(150,150,150); doc.text("--- Laternen / Himmel ---", 105, y, {align:"center"}); y+=6; doc.setFontSize(12); doc.setTextColor(0,0,0);
-                addLine("Kollekte", proz.kollekte[0], proz.kollekte[1]);
+                addLine("Kollekte", ko[0], ko[1]);
                 y += 6; doc.setFontSize(10); doc.setTextColor(150,150,150); doc.text("--- Frauen ---", 105, y, {align:"center"}); y+=6; doc.setFontSize(12); doc.setTextColor(0,0,0);
-                addLine("Fahnen (Rot)", proz.fahneRotWeiss2[0], proz.fahneRotWeiss2[1]);
-                doc.save(`Prozession_${proz.titel.replace(/\s+/g, '_')}.pdf`);
+                addLine("Fahnen (Rot)", frw[0], frw[1]);
+                doc.save(`Prozession_${(proz.titel||"Neu").replace(/\s+/g, '_')}.pdf`);
             };
 
             return (
                 <div className="flex flex-col md:flex-row h-full w-full">
                     <MobileTopBar title="Prozessionen" />
                     <div className="hidden md:flex w-[300px] bg-white border-r border-gray-200 flex-col h-full z-10 shrink-0">
-                        <div className="p-6"><h2 className="text-2xl font-bold text-gray-900 mb-4">Prozessionen</h2><button onClick={() => { const nId = crypto.randomUUID(); vm.setProzessionen([{id: nId, titel: "Neue Prozession", datum: "", gabenbereitung: ["",""], kollekte: ["",""], flambeaux: ["",""], weihrauch: "", schiffchen: "", kreuz: "", fahneGruenWeiss: ["",""], fahneGelbWeiss1: ["",""], kinderfahnen: ["",""], laternen: ["",""], fahneRotWeiss2: ["",""], hiddenMinis: []}, ...vm.prozessionen]); setSelectedId(nId); }} className="w-full bg-gray-100 font-medium py-2 rounded-lg border border-gray-300"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
+                        <div className="p-6"><h2 className="text-2xl font-bold text-gray-900 mb-4">Prozessionen</h2><button onClick={() => { const nId = crypto.randomUUID(); vm.setProzessionen([{id: nId, titel: "Neue Prozession", datum: "", gabenbereitung: ["",""], kollekte: ["",""], flambeaux: ["",""], weihrauch: "", schiffchen: "", kreuz: "", fahneGruenWeiss: ["",""], fahneGelbWeiss1: ["",""], kinderfahnen: ["",""], laternen: ["",""], fahneRotWeiss2: ["",""], hiddenMinis: []}, ...(vm.prozessionen||[])]); setSelectedId(nId); }} className="w-full bg-gray-100 font-medium py-2 rounded-lg border border-gray-300"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
                         <div className="flex-1 overflow-y-auto px-3 space-y-1">{sorted.map(p => (<button key={p.id} onClick={() => setSelectedId(p.id)} className={`w-full text-left px-4 py-3 rounded-lg ${selectedId === p.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}><div className="font-bold truncate">{p.titel}</div><div className="text-sm opacity-80">{p.datum || 'Kein Datum'}</div></button>))}</div>
                     </div>
                     <div className="flex-1 bg-gray-50/50 p-4 md:p-10 overflow-y-auto flex flex-col md:flex-row md:space-x-8">
@@ -724,7 +723,15 @@
                         ) : (
                             vm.prozessionen.filter(p => p.id === selectedId).map(proz => {
                                 const update = (field, val) => vm.setProzessionen(vm.prozessionen.map(pr => pr.id === proz.id ? {...pr, [field]: val} : pr));
-                                const assigned = [...proz.gabenbereitung, ...proz.kollekte, ...proz.flambeaux, proz.weihrauch, proz.schiffchen, proz.kreuz, ...proz.fahneGruenWeiss, ...proz.fahneGelbWeiss1, ...proz.kinderfahnen, ...proz.laternen, ...proz.fahneRotWeiss2].filter(x => x);
+                                const fg = Array.isArray(proz.fahneGruenWeiss) ? proz.fahneGruenWeiss : ["",""];
+                                const fge = Array.isArray(proz.fahneGelbWeiss1) ? proz.fahneGelbWeiss1 : ["",""];
+                                const fl = Array.isArray(proz.flambeaux) ? proz.flambeaux : ["",""];
+                                const gb = Array.isArray(proz.gabenbereitung) ? proz.gabenbereitung : ["",""];
+                                const kf = Array.isArray(proz.kinderfahnen) ? proz.kinderfahnen : ["",""];
+                                const ko = Array.isArray(proz.kollekte) ? proz.kollekte : ["",""];
+                                const frw = Array.isArray(proz.fahneRotWeiss2) ? proz.fahneRotWeiss2 : ["",""];
+
+                                const assigned = [...gb, ...ko, ...fl, proz.weihrauch, proz.schiffchen, proz.kreuz, ...fg, ...fge, ...kf, ...ko, ...frw].filter(x => x);
                                 const available = vm.alleMinis.filter(m => !assigned.includes(m));
                                 return (
                                     <React.Fragment key={proz.id}>
@@ -736,14 +743,14 @@
                                             </div>
                                             <div className="bg-gray-100 p-4 md:p-6 rounded-xl space-y-4 md:space-y-6">
                                                 <div className="flex justify-center"><div className="w-full md:w-1/2"><DropSlot title="Kreuz" value={proz.kreuz} onDrop={v => update('kreuz', v)} onRemove={() => update('kreuz', '')} /></div></div>
-                                                <div className="flex space-x-2 md:space-x-4"><div className="flex-1"><DropSlot title="Fahne (Grün) 1" value={proz.fahneGruenWeiss[0]} onDrop={v => update('fahneGruenWeiss', [v, proz.fahneGruenWeiss[1]])} onRemove={() => update('fahneGruenWeiss', ['', proz.fahneGruenWeiss[1]])} /></div><div className="flex-1"><DropSlot title="Fahne (Grün) 2" value={proz.fahneGruenWeiss[1]} onDrop={v => update('fahneGruenWeiss', [proz.fahneGruenWeiss[0], v])} onRemove={() => update('fahneGruenWeiss', [proz.fahneGruenWeiss[0], ''])} /></div></div>
+                                                <div className="flex space-x-2 md:space-x-4"><div className="flex-1"><DropSlot title="Fahne (Grün) 1" value={fg[0]} onDrop={v => update('fahneGruenWeiss', [v, fg[1]])} onRemove={() => update('fahneGruenWeiss', ['', fg[1]])} /></div><div className="flex-1"><DropSlot title="Fahne (Grün) 2" value={fg[1]} onDrop={v => update('fahneGruenWeiss', [fg[0], v])} onRemove={() => update('fahneGruenWeiss', [fg[0], ''])} /></div></div>
                                                 <div className="text-center text-sm font-bold text-gray-400 tracking-widest my-4">— Männer —</div>
-                                                <div className="flex space-x-4"><div className="flex-1"><DropSlot title="Fahne (Gelb) 1" value={proz.fahneGelbWeiss1[0]} onDrop={v => update('fahneGelbWeiss1', [v, proz.fahneGelbWeiss1[1]])} onRemove={() => update('fahneGelbWeiss1', ['', proz.fahneGelbWeiss1[1]])} /></div><div className="flex-1"><DropSlot title="Fahne (Gelb) 2" value={proz.fahneGelbWeiss1[1]} onDrop={v => update('fahneGelbWeiss1', [proz.fahneGelbWeiss1[0], v])} onRemove={() => update('fahneGelbWeiss1', [proz.fahneGelbWeiss1[0], ''])} /></div></div>
+                                                <div className="flex space-x-4"><div className="flex-1"><DropSlot title="Fahne (Gelb) 1" value={fge[0]} onDrop={v => update('fahneGelbWeiss1', [v, fge[1]])} onRemove={() => update('fahneGelbWeiss1', ['', fge[1]])} /></div><div className="flex-1"><DropSlot title="Fahne (Gelb) 2" value={fge[1]} onDrop={v => update('fahneGelbWeiss1', [fge[0], v])} onRemove={() => update('fahneGelbWeiss1', [fge[0], ''])} /></div></div>
                                                 <div className="text-center text-sm font-bold text-gray-400 tracking-widest my-4">— Musikverein —</div>
-                                                <div className="flex space-x-4"><div className="flex-1"><DropSlot title="Flambeaux 1" value={proz.flambeaux[0]} onDrop={v => update('flambeaux', [v, proz.flambeaux[1]])} onRemove={() => update('flambeaux', ['', proz.flambeaux[1]])} /></div><div className="flex-1"><DropSlot title="Flambeaux 2" value={proz.flambeaux[1]} onDrop={v => update('flambeaux', [proz.flambeaux[0], v])} onRemove={() => update('flambeaux', [proz.flambeaux[0], ''])} /></div></div>
-                                                <div className="flex space-x-4"><div className="flex-1"><DropSlot title="Gabenbereitung 1" value={proz.gabenbereitung[0]} onDrop={v => update('gabenbereitung', [v, proz.gabenbereitung[1]])} onRemove={() => update('gabenbereitung', ['', proz.gabenbereitung[1]])} /></div><div className="flex-1"><DropSlot title="Gabenbereitung 2" value={proz.gabenbereitung[1]} onDrop={v => update('gabenbereitung', [proz.gabenbereitung[0], v])} onRemove={() => update('gabenbereitung', [proz.gabenbereitung[0], ''])} /></div></div>
+                                                <div className="flex space-x-4"><div className="flex-1"><DropSlot title="Flambeaux 1" value={fl[0]} onDrop={v => update('flambeaux', [v, fl[1]])} onRemove={() => update('flambeaux', ['', fl[1]])} /></div><div className="flex-1"><DropSlot title="Flambeaux 2" value={fl[1]} onDrop={v => update('flambeaux', [fl[0], v])} onRemove={() => update('flambeaux', [fl[0], ''])} /></div></div>
+                                                <div className="flex space-x-4"><div className="flex-1"><DropSlot title="Gabenbereitung 1" value={gb[0]} onDrop={v => update('gabenbereitung', [v, gb[1]])} onRemove={() => update('gabenbereitung', ['', gb[1]])} /></div><div className="flex-1"><DropSlot title="Gabenbereitung 2" value={gb[1]} onDrop={v => update('gabenbereitung', [gb[0], v])} onRemove={() => update('gabenbereitung', [gb[0], ''])} /></div></div>
                                                 <div className="text-center text-sm font-bold text-gray-400 tracking-widest my-4">— Kommunionkinder —</div>
-                                                <div className="flex space-x-4"><div className="flex-1"><DropSlot title="Kinderfahne 1" value={proz.kinderfahnen[0]} onDrop={v => update('kinderfahnen', [v, proz.kinderfahnen[1]])} onRemove={() => update('kinderfahnen', ['', proz.kinderfahnen[1]])} /></div><div className="flex-1"><DropSlot title="Kinderfahne 2" value={proz.kinderfahnen[1]} onDrop={v => update('kinderfahnen', [proz.kinderfahnen[0], v])} onRemove={() => update('kinderfahnen', [proz.kinderfahnen[0], ''])} /></div></div>
+                                                <div className="flex space-x-4"><div className="flex-1"><DropSlot title="Kinderfahne 1" value={kf[0]} onDrop={v => update('kinderfahnen', [v, kf[1]])} onRemove={() => update('kinderfahnen', ['', kf[1]])} /></div><div className="flex-1"><DropSlot title="Kinderfahne 2" value={kf[1]} onDrop={v => update('kinderfahnen', [kf[0], v])} onRemove={() => update('kinderfahnen', [kf[0], ''])} /></div></div>
                                                 <div className="flex justify-center space-x-4"><div className="flex-1"><DropSlot title="Weihrauch" value={proz.weihrauch} onDrop={v => update('weihrauch', v)} onRemove={() => update('weihrauch', '')} /></div><div className="flex-1"><DropSlot title="Schiffchen" value={proz.schiffchen} onDrop={v => update('schiffchen', v)} onRemove={() => update('schiffchen', '')} /></div></div>
                                             </div>
                                         </div>
@@ -755,26 +762,49 @@
                 </div>
             );
         }
-
         function EventsView() {
             const vm = useViewModel();
             const [selectedId, setSelectedId] = useState(null);
-            const sorted = [...(vm.events || [])].sort((a, b) => (vm.parseDateStr(a.datum)||0) - (vm.parseDateStr(b.datum)||0));
+            
+            // Sichere Datums-Sortierung, die nicht mehr abstürzt!
+            const sorted = [...(vm.events || [])].sort((a, b) => {
+                const da = vm.parseDateStr(a.datum || "");
+                const db = vm.parseDateStr(b.datum || "");
+                return (da ? da.getTime() : 0) - (db ? db.getTime() : 0);
+            });
+
             return (
                 <div className="flex flex-col md:flex-row h-full w-full">
                     <MobileTopBar title="Events" />
                     <div className="hidden md:flex w-[300px] bg-white border-r border-gray-200 flex-col h-full z-10 shrink-0">
-                        <div className="p-6"><h2 className="text-2xl font-bold text-gray-900 mb-4">Events</h2><button onClick={() => { const nId = crypto.randomUUID(); vm.setEvents([{id: nId, titel: "Neues Event", datum: "", beschreibung: ""}, ...vm.events]); setSelectedId(nId); }} className="w-full bg-gray-100 font-medium py-2 rounded-lg border border-gray-300"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
-                        <div className="flex-1 overflow-y-auto px-3 space-y-1">{sorted.map(e => <button key={e.id} onClick={() => setSelectedId(e.id)} className={`w-full text-left px-4 py-3 rounded-lg ${selectedId === e.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}><div className="font-bold truncate">{e.titel}</div><div className="text-sm opacity-80">{e.datum}</div></button>)}</div>
+                        <div className="p-6">
+                            <h2 className="text-2xl font-bold text-gray-900 mb-4">Events</h2>
+                            <button onClick={() => { const nId = crypto.randomUUID(); vm.setEvents([{id: nId, titel: "Neues Event", datum: "", beschreibung: ""}, ...(vm.events || [])]); setSelectedId(nId); }} className="w-full bg-gray-100 font-medium py-2 rounded-lg border border-gray-300"><i className="fa-solid fa-plus mr-2"></i>Neu</button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto px-3 space-y-1">
+                            {sorted.map(e => (
+                                <button key={e.id} onClick={() => setSelectedId(e.id)} className={`w-full text-left px-4 py-3 rounded-lg ${selectedId === e.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}>
+                                    <div className="font-bold truncate">{e.titel || "Neues Event"}</div>
+                                    <div className="text-sm opacity-80">{e.datum || "Kein Datum"}</div>
+                                </button>
+                            ))}
+                        </div>
                     </div>
                     <div className="flex-1 bg-gray-50/50 p-4 md:p-10 overflow-y-auto">
                         {!selectedId ? (
                             <div className="w-full h-full flex flex-col justify-center items-center text-gray-400"><i className="fa-solid fa-champagne-glasses text-5xl md:text-7xl mb-4 opacity-50"></i><p className="text-lg md:text-xl">Wähle ein Event aus</p></div>
                         ) : (
                             vm.events.filter(e => e.id === selectedId).map(ev => (
-                                <div key={ev.id} className="max-w-4xl bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm">
-                                    <div className="flex justify-between items-start mb-6"><div className="w-full"><input type="text" value={ev.titel} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, titel: e.target.value} : x))} className="text-2xl md:text-4xl font-black text-gray-900 w-full bg-transparent outline-none mb-2" placeholder="Titel..." /><input type="text" value={ev.datum} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, datum: e.target.value} : x))} className="text-lg md:text-xl font-bold text-blue-600 w-full bg-transparent outline-none" placeholder="Datum..." /></div><button onClick={() => { vm.setEvents(vm.events.filter(x => x.id !== ev.id)); setSelectedId(null); }} className="text-red-500 p-2"><i className="fa-solid fa-trash text-xl"></i></button></div>
-                                    <textarea value={ev.beschreibung} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, beschreibung: e.target.value} : x))} className="w-full h-48 bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-700 outline-none focus:border-blue-500 mb-8" placeholder="Beschreibung..."></textarea>
+                                <div key={ev.id} className="max-w-4xl bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm flex flex-col h-full md:h-auto min-h-[400px]">
+                                    <div className="flex justify-between items-start mb-6">
+                                        <div className="w-full pr-4">
+                                            <input type="text" value={ev.titel} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, titel: e.target.value} : x))} className="text-2xl md:text-4xl font-black text-gray-900 w-full bg-transparent outline-none mb-2" placeholder="Titel..." />
+                                            <input type="text" value={ev.datum} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, datum: e.target.value} : x))} className="text-lg md:text-xl font-bold text-blue-600 w-full bg-transparent outline-none" placeholder="Datum..." />
+                                        </div>
+                                        <button onClick={() => { if(confirm("Event löschen?")) { vm.setEvents(vm.events.filter(x => x.id !== ev.id)); setSelectedId(null); } }} className="text-red-500 hover:text-red-700 p-2"><i className="fa-solid fa-trash text-xl"></i></button>
+                                    </div>
+                                    {/* Textarea flexibel gemacht, damit keine Texte mehr abgeschnitten werden */}
+                                    <textarea value={ev.beschreibung} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, beschreibung: e.target.value} : x))} className="w-full flex-1 min-h-[250px] bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-700 outline-none focus:border-blue-500 mb-8 whitespace-pre-wrap" placeholder="Beschreibung..."></textarea>
                                 </div>
                             ))
                         )}
@@ -783,9 +813,101 @@
             );
         }
 
-        // ==========================================
-        // 5. DIE FEHLENDEN ADMIN VIEWS
-        // ==========================================
+        function VormerkenView() {
+            const vm = useViewModel();
+            const [editVormerk, setEditVormerk] = useState(null);
+            const wochentage = [{id: 2, n: 'Mo'}, {id: 3, n: 'Di'}, {id: 4, n: 'Mi'}, {id: 5, n: 'Do'}, {id: 6, n: 'Fr'}, {id: 7, n: 'Sa'}, {id: 1, n: 'So'}];
+            
+            // Sichere Datums-Sortierung, die nicht mehr abstürzt!
+            const sorted = [...(vm.vormerkungen || [])].sort((a, b) => {
+                const da = vm.parseDateStr(a.datum || "");
+                const db = vm.parseDateStr(b.datum || "");
+                return (da ? da.getTime() : 0) - (db ? db.getTime() : 0);
+            });
+
+            return (
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Vormerken" />
+                    <div className="flex-1 overflow-y-auto p-4 md:p-10 bg-gray-50/50">
+                        <div className="max-w-5xl mx-auto md:mx-0 pb-12">
+                            <div className="hidden md:flex justify-between items-end mb-8">
+                                <div><h1 className="text-3xl font-bold text-gray-900">Vorgemerkte Messdiener</h1></div>
+                                <button className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition" onClick={() => setEditVormerk({id: crypto.randomUUID(), datum: "", wochentag: "Sonntag", uhrzeit: "", anlass: "", minis: []})}><i className="fa-solid fa-plus mr-2"></i>Vormerkung hinzufügen</button>
+                            </div>
+                            <div className="md:hidden mb-6"><button onClick={() => setEditVormerk({id: crypto.randomUUID(), datum: "", wochentag: "Sonntag", uhrzeit: "", anlass: "", minis: []})} className="w-full bg-purple-600 text-white py-3 rounded-xl font-bold shadow-md"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
+                            
+                            {sorted.length === 0 ? (
+                                <div className="text-center p-8 bg-white border border-dashed border-gray-300 rounded-xl mb-8"><p className="text-gray-500">Keine speziellen Gottesdienste vorgemerkt.</p></div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 mb-10">
+                                    {sorted.map(v => (
+                                        <div key={v.id} onClick={() => setEditVormerk(v)} className="bg-white p-5 rounded-2xl border border-purple-200 shadow-sm relative cursor-pointer">
+                                            <button onClick={(e) => { e.stopPropagation(); vm.setVormerkungen(vm.vormerkungen.filter(x => x.id !== v.id)); }} className="absolute top-4 right-4 text-gray-300 hover:text-red-500"><i className="fa-solid fa-trash"></i></button>
+                                            <p className="text-purple-600 font-bold text-xs">{v.wochentag}, {v.datum}</p>
+                                            <p className="text-xl font-black text-gray-900 mt-1">{v.uhrzeit || 'Variabel'}</p>
+                                            <p className="text-gray-500 text-sm font-medium mb-3 truncate">{v.anlass}</p>
+                                            <div className="space-y-1">
+                                                {(v.minis || []).map(m => (
+                                                    <div key={m} className="flex items-center space-x-2">
+                                                        <i className={`fa-solid fa-thumbtack ${v.isFromPfarrbuero?'text-orange-400':'text-purple-400'} text-xs`}></i>
+                                                        <span className={`text-sm font-semibold ${v.isFromPfarrbuero?'text-orange-600':''}`}>{m} {v.isFromPfarrbuero && <span className="opacity-70 text-[10px] ml-1 font-normal">(Pfarrbüro)</span>}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            <div className="flex justify-between items-end mb-4 md:mb-6 mt-8"><h2 className="text-xl md:text-2xl font-bold text-gray-900">Wöchentliche Abwesenheiten</h2><button onClick={() => vm.setRegelmaessigeAbwesenheiten([...(vm.regelmaessigeAbwesenheiten || []), { id: crypto.randomUUID(), name: '', wochentage: [] }])} className="bg-white border border-gray-300 px-3 py-1 md:px-4 md:py-2 rounded-lg text-sm font-medium"><i className="fa-solid fa-plus md:mr-2"></i><span className="hidden md:inline">Person</span></button></div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                                {(vm.regelmaessigeAbwesenheiten || []).map(regel => (
+                                    <div key={regel.id} className="bg-white rounded-xl border border-gray-200 p-4 md:p-6 shadow-sm">
+                                        <div className="flex justify-between items-center mb-4 md:mb-6"><AutocompleteField value={regel.name} onChange={val => vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.map(r => r.id === regel.id ? {...r, name: val} : r))} suggestions={vm.alleMinis} placeholder="Name..." className="font-bold text-lg border-b border-gray-300 focus:border-blue-500 outline-none w-2/3 bg-transparent pb-1" /><button onClick={() => vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.filter(r => r.id !== regel.id))} className="text-red-400"><i className="fa-solid fa-trash"></i></button></div>
+                                        <div className="flex justify-between">
+                                            {wochentage.map(tag => {
+                                                const act = (regel.wochentage || []).includes(tag.id);
+                                                return <button key={tag.id} onClick={() => { const n = act ? regel.wochentage.filter(t=>t!==tag.id) : [...(regel.wochentage || []), tag.id]; vm.setRegelmaessigeAbwesenheiten(vm.regelmaessigeAbwesenheiten.map(r => r.id === regel.id ? {...r, wochentage: n} : r)); }} className={`w-8 h-8 md:w-10 md:h-10 rounded-lg font-bold text-xs md:text-sm transition-all ${act ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-500'}`}>{tag.n}</button>;
+                                            })}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                    {editVormerk && (
+                        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+                            <div className="bg-white p-6 md:p-8 rounded-2xl shadow-2xl max-w-xl w-full">
+                                <h2 className="text-xl md:text-2xl font-bold mb-6 text-gray-900"><i className="fa-solid fa-calendar-check text-purple-500 mr-3"></i>Vormerkung bearbeiten</h2>
+                                <div className="space-y-4 mb-8">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div><label className="block text-sm text-gray-500 mb-1">Datum</label><input type="text" value={editVormerk.datum} onChange={e=>setEditVormerk({...editVormerk, datum: e.target.value})} placeholder="DD.MM.YYYY" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div>
+                                        <div><label className="block text-sm text-gray-500 mb-1">Wochentag</label><input type="text" value={editVormerk.wochentag} onChange={e=>setEditVormerk({...editVormerk, wochentag: e.target.value})} placeholder="z.B. Sonntag" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div><label className="block text-sm text-gray-500 mb-1">Uhrzeit</label><input type="text" value={editVormerk.uhrzeit} onChange={e=>setEditVormerk({...editVormerk, uhrzeit: e.target.value})} placeholder="Optional" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div>
+                                        <div><label className="block text-sm text-gray-500 mb-1">Anlass</label><input type="text" value={editVormerk.anlass} onChange={e=>setEditVormerk({...editVormerk, anlass: e.target.value})} placeholder="z.B. Firmung" className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500"/></div>
+                                    </div>
+                                    <hr className="my-4 border-gray-200" />
+                                    <h3 className="font-bold text-gray-800">Eingeteilte Personen</h3>
+                                    {(editVormerk.minis || []).map((m, i) => (
+                                        <div key={i} className="flex space-x-2">
+                                            <AutocompleteField value={m} onChange={(val) => { let nm = [...editVormerk.minis]; nm[i] = val; setEditVormerk({...editVormerk, minis: nm}); }} suggestions={vm.alleMinis} placeholder="Name..." className="flex-1 border border-gray-300 rounded-lg px-4 py-2 outline-none focus:border-purple-500" />
+                                            <button onClick={() => { let nm = [...editVormerk.minis]; nm.splice(i, 1); setEditVormerk({...editVormerk, minis: nm}); }} className="text-red-500 hover:text-red-700 px-3"><i className="fa-solid fa-trash"></i></button>
+                                        </div>
+                                    ))}
+                                    {(editVormerk.minis || []).length < 8 && <button onClick={() => setEditVormerk({...editVormerk, minis: [...(editVormerk.minis || []), ""]})} className="text-purple-600 font-bold text-sm"><i className="fa-solid fa-plus mr-1"></i>Person hinzufügen</button>}
+                                </div>
+                                <div className="flex justify-end space-x-4">
+                                    <button onClick={() => setEditVormerk(null)} className="px-5 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition">Abbrechen</button>
+                                    <button onClick={() => { let f = {...editVormerk}; f.minis = (f.minis || []).filter(m => m.trim() !== ""); const exists = (vm.vormerkungen || []).find(x => x.id === f.id); if(exists) vm.setVormerkungen(vm.vormerkungen.map(x => x.id === f.id ? f : x)); else vm.setVormerkungen([...(vm.vormerkungen || []), f]); setEditVormerk(null); }} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-md transition">Speichern</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
 
         function AbwesenheitenAdminView() {
             const vm = useViewModel();
@@ -873,12 +995,12 @@
                             <div className="md:hidden mb-6"><button onClick={addNote} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6 pb-10">
                                 {(vm.notizen || []).map(note => (
-                                    <div key={note.id} className="bg-yellow-100/80 rounded-2xl border border-yellow-300 p-5 shadow-sm">
+                                    <div key={note.id} className="bg-yellow-100/80 rounded-2xl border border-yellow-300 p-5 shadow-sm flex flex-col min-h-[250px]">
                                         <div className="flex justify-between items-center mb-3">
                                             <input type="text" value={note.titel} onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, titel: e.target.value} : n))} className="font-bold text-lg bg-transparent border-none w-full text-gray-800 outline-none" placeholder="Titel..." />
                                             <button onClick={() => vm.setNotizen(vm.notizen.filter(n => n.id !== note.id))} className="text-red-500/70 hover:text-red-600 ml-2"><i className="fa-solid fa-trash"></i></button>
                                         </div>
-                                        <textarea value={note.inhalt} onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, inhalt: e.target.value} : n))} placeholder="Hier Notizen eintragen..." className="w-full h-32 md:h-48 bg-transparent border-none resize-none outline-none text-gray-700 text-sm md:text-base"></textarea>
+                                        <textarea value={note.inhalt} onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, inhalt: e.target.value} : n))} placeholder="Hier Notizen eintragen..." className="w-full flex-1 bg-transparent border-none resize-none outline-none text-gray-700 text-sm md:text-base whitespace-pre-wrap"></textarea>
                                     </div>
                                 ))}
                             </div>
@@ -906,7 +1028,7 @@
                     if(confirm("Deine aktuellen Gruppen werden durch die Daten aus der Zwischenablage überschrieben. Fortfahren?")) {
                         setKiLoading(true);
                         const body = { contents: [{ parts: [{ text: `Extrahiere Namen und weise sie Gruppen zu. TEXT: ${text}` }] }], generationConfig: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "OBJECT", properties: { name: { type: "STRING" }, mitglieder: { type: "ARRAY", items: { type: "STRING" } } }, required: ["name", "mitglieder"] } } } };
-                        const response = await fetch(`[https://generativelanguage.googleapis.com/v1beta/models/$](https://generativelanguage.googleapis.com/v1beta/models/$){vm.geminiModel}:generateContent?key=${vm.apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+                        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${vm.geminiModel}:generateContent?key=${vm.apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
                         const json = await response.json();
                         let cleanJsonString = json.candidates[0].content.parts[0].text.replace(/^```json/, '').replace(/^```/, '').replace(/```$/, '').trim();
                         const importierteGruppen = JSON.parse(cleanJsonString);
@@ -1037,11 +1159,23 @@
         }
 
         // ==========================================
-        // 8. APP ROUTING
+        // 6. APP ROUTING
         // ==========================================
         function AdminDashboard() {
             const vm = useViewModel();
-            const tiles = [{ id: 'planer', label: 'Planer', icon: 'fa-regular fa-file-lines', color: 'bg-blue-500' }, { id: 'prozessionen', label: 'Prozessionen', icon: 'fa-solid fa-person-walking', color: 'bg-purple-500' }, { id: 'events', label: 'Events', icon: 'fa-solid fa-champagne-glasses', color: 'bg-pink-500' }, { id: 'vormerken', label: 'Vormerken', icon: 'fa-regular fa-calendar-check', color: 'bg-green-500' }, { id: 'abwesenheiten_admin', label: 'Urlaube', icon: 'fa-solid fa-user-clock', color: 'bg-red-500' }, { id: 'statistik', label: 'Statistik', icon: 'fa-solid fa-chart-column', color: 'bg-orange-500' }, { id: 'notizen', label: 'Notizen', icon: 'fa-regular fa-note-sticky', color: 'bg-yellow-500' }, { id: 'messdiener', label: 'Gruppen', icon: 'fa-solid fa-user-group', color: 'bg-indigo-500' }, { id: 'einstellungen', label: 'Optionen', icon: 'fa-solid fa-gear', color: 'bg-gray-500' }, { id: 'werkzeuge', label: 'Tools', icon: 'fa-solid fa-screwdriver-wrench', color: 'bg-teal-500' }];
+            const tiles = [
+                { id: 'planer', label: 'Planer', icon: 'fa-regular fa-file-lines', color: 'bg-blue-500' }, 
+                { id: 'prozessionen', label: 'Prozessionen', icon: 'fa-solid fa-person-walking', color: 'bg-purple-500' }, 
+                { id: 'events', label: 'Events', icon: 'fa-solid fa-champagne-glasses', color: 'bg-pink-500' }, 
+                { id: 'vormerken', label: 'Vormerken', icon: 'fa-regular fa-calendar-check', color: 'bg-green-500' }, 
+                { id: 'abwesenheiten_admin', label: 'Urlaube', icon: 'fa-solid fa-user-clock', color: 'bg-red-500' }, 
+                { id: 'statistik', label: 'Statistik', icon: 'fa-solid fa-chart-column', color: 'bg-orange-500' }, 
+                { id: 'notizen', label: 'Notizen', icon: 'fa-regular fa-note-sticky', color: 'bg-yellow-500' }, 
+                { id: 'messdiener', label: 'Gruppen', icon: 'fa-solid fa-user-group', color: 'bg-indigo-500' }, 
+                { id: 'einstellungen', label: 'Optionen', icon: 'fa-solid fa-gear', color: 'bg-gray-500' }, 
+                { id: 'werkzeuge', label: 'Tools', icon: 'fa-solid fa-screwdriver-wrench', color: 'bg-teal-500' }
+            ];
+            
             return (
                 <div className="min-h-screen bg-[#f2f2f7] p-6 pb-12 flex flex-col antialiased">
                     <div className="flex justify-between items-end mb-8 pt-8"><h1 className="text-4xl font-black text-gray-900 tracking-tight">Übersicht</h1><button onClick={() => { vm.setRoute('landing'); vm.setAdminPassword(''); }} className="bg-white px-4 py-2 rounded-full shadow-sm text-sm font-bold text-red-500 border border-gray-200"><i className="fa-solid fa-power-off mr-2"></i>Abmelden</button></div>
@@ -1055,6 +1189,7 @@
             const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
             useEffect(() => { const handleResize = () => setIsMobile(window.innerWidth < 768); window.addEventListener('resize', handleResize); return () => window.removeEventListener('resize', handleResize); }, []);
             
+            // Handy-Modus: Überspringt das Dashboard komplett und zeigt direkt den fertigen Planer!
             if (isMobile) {
                 return (
                     <div className="flex h-screen w-full bg-macBg text-[#1d1d1f] antialiased">
