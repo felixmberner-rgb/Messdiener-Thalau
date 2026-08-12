@@ -21,8 +21,8 @@
     </script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
@@ -97,7 +97,7 @@
             const [prozessionen, setProzessionen] = useAppStorage('prozessionenData', []);
             const [pdfFile, setPdfFile] = useState(null);
 
-            // Auto-Login über URL Parameter
+            // Auto-Login über URL Parameter "?id=xxx"
             useEffect(() => { const urlParams = new URLSearchParams(window.location.search); const projectId = urlParams.get('id'); if (projectId && projectId.length > 5) setFirebaseProjectId(projectId.trim()); }, []);
 
             const getFbUrl = (docName) => `https://firestore.googleapis.com/v1/projects/${firebaseProjectId.trim()}/databases/(default)/documents/messdiener/${docName}`;
@@ -116,27 +116,19 @@
                     await fetchDoc('prozessionen', f => { if(f.prozessionenJson) setProzessionen(JSON.parse(f.prozessionenJson.stringValue)); }, f=>f);
                     await fetchDoc('notizen', f => { if(f.notizenJson) setNotizen(JSON.parse(f.notizenJson.stringValue)); }, f=>f);
                     
-                    // Zieht automatisch den aktuellen Plan aus der Mac App!
+                    // Zieht automatisch den aktuellen Plan (z.B. aus der Mac App)
                     await fetchDoc('aktuellerPlan', f => { 
                         if(f.planDataJson) { 
                             const parsed = JSON.parse(f.planDataJson.stringValue);
                             if(parsed && parsed.length > 0) {
-                                // Filtere nur Gottesdienste heraus (Mac App speichert auch Vorschau/Woche)
+                                // Bereinige Mac-App spezifische Objekte (Vorschau etc.)
                                 const nurGottesdienste = parsed.filter(item => item.art === 'gottesdienst').map(d => ({
-                                    id: crypto.randomUUID(),
-                                    datum: d.datum || "",
-                                    wochentag: d.wochentag || "",
-                                    uhrzeit: d.uhrzeit || "",
-                                    anlass: d.typ || "Hl. Messe",
-                                    gruppe: "Z", // Dummy Gruppe
-                                    minis: d.messdiener && d.messdiener !== "-" ? d.messdiener.split(',').map(n=>n.trim()) : [],
-                                    manuellerBedarf: d.manuellerBedarf || null,
-                                    manuellerText: d.manuellerText || null,
-                                    isFromPfarrbuero: false
+                                    id: crypto.randomUUID(), datum: d.datum || "", wochentag: d.wochentag || "", uhrzeit: d.uhrzeit || "",
+                                    anlass: d.typ || "Hl. Messe", gruppe: "A", minis: d.messdiener && d.messdiener !== "-" ? d.messdiener.split(',').map(n=>n.trim()) : [],
+                                    manuellerBedarf: d.manuellerBedarf || null, manuellerText: d.manuellerText || null, isFromPfarrbuero: false
                                 }));
                                 if (nurGottesdienste.length > 0 && appState === 'upload') {
-                                    setDienste(nurGottesdienste);
-                                    setAppState('assigned');
+                                    setDienste(nurGottesdienste); setAppState('assigned');
                                 }
                             }
                         } 
@@ -147,7 +139,6 @@
             useEffect(() => { if(firebaseProjectId) fetchAllData().then(() => setIsAppLoading(false)); else setTimeout(() => setIsAppLoading(false), 500); }, [firebaseProjectId]);
 
             const syncDoc = async (docName, fields) => { if (!firebaseProjectId.trim()) return; await fetch(getFbUrl(docName), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) }); };
-            
             const syncStatistikToFirebase = async () => { let fields = {}; for (const [key, val] of Object.entries(statistik)) fields[key] = { integerValue: String(val) }; await syncDoc('statistik', fields); };
 
             useEffect(() => { const t = setTimeout(() => syncDoc('gruppen', { gruppenJson: { stringValue: JSON.stringify(gruppen) }, neueMessdienerJson: { stringValue: JSON.stringify(neueMessdiener) } }), 1000); return () => clearTimeout(t); }, [gruppen, neueMessdiener]);
@@ -161,179 +152,42 @@
 
             const alleMinis = gruppen.flatMap(g => g.mitglieder).sort();
 
-            // PLANER GLOBALS
-            const parseDateStr = (str) => { if (!str) return null; const parts = str.match(/\d+/g); if (!parts || parts.length < 2) return null; return new Date(parts.length >= 3 ? parseInt(parts[2]) : new Date().getFullYear(), parseInt(parts[1]) - 1, parseInt(parts[0])); };
-            const normalizeTime = (time) => { if(!time) return ""; let clean = time.replace(/h/gi, '').replace(/uhr/gi, '').trim(); let parts = clean.split(/[:.]/); if (parts.length === 2) return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.${parts[1].length === 1 ? `${parts[1]}0` : (parts[1] === "" ? "00" : parts[1])}`; else if (parts.length === 1 && parts[0] !== "") return `${parts[0].length === 1 ? `0${parts[0]}` : parts[0]}.00`; return time; };
-            
-            // WICHTIG: Woche startet ab Sonntag!
-            const getWeekIdentifier = (dateStr) => { 
-                const d = parseDateStr(dateStr); if (!d) return crypto.randomUUID(); 
-                const dCopy = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-                const day = dCopy.getDay(); // 0 = Sonntag
-                dCopy.setDate(dCopy.getDate() - day); // Springe zurück zum Sonntag
-                return `${dCopy.getFullYear()}-${String(dCopy.getMonth()+1).padStart(2,'0')}-${String(dCopy.getDate()).padStart(2,'0')}`; 
-            };
-
-            const getChronologischeBloecke = () => {
-                let bloecke = []; let currentWeek = null; let currentDienste = [];
-                const sorted = [...dienste].sort((a, b) => { const d1 = parseDateStr(a.datum) || new Date(0); const d2 = parseDateStr(b.datum) || new Date(0); if (d1.getTime() === d2.getTime()) return normalizeTime(a.uhrzeit).localeCompare(normalizeTime(b.uhrzeit)); return d1 - d2; });
-                for (let dienst of sorted) {
-                    const w = getWeekIdentifier(dienst.datum);
-                    if (w !== currentWeek) {
-                        if (currentWeek !== null) { let counts = {}; currentDienste.forEach(d => { if (d.gruppe && d.gruppe !== "Z") counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; }); bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : (gruppen[0]?.name || "A"), dienste: currentDienste }); }
-                        currentWeek = w; currentDienste = [dienst];
-                    } else currentDienste.push(dienst);
-                }
-                if (currentWeek !== null) { let counts = {}; currentDienste.forEach(d => { if (d.gruppe && d.gruppe !== "Z") counts[d.gruppe] = (counts[d.gruppe] || 0) + 1; }); bloecke.push({ id: currentWeek, gruppe: Object.keys(counts).length ? Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b) : (gruppen[0]?.name || "A"), dienste: currentDienste }); }
-                return bloecke;
-            };
-
-            const leseGottesdienste = async () => {
-                if (!apiKey) { setFehlerMeldung("Bitte API-Key in den Einstellungen hinterlegen."); return; }
-                if (!pdfFile) { setFehlerMeldung("Bitte PDF wählen."); return; }
-                setLaedt(true); setFehlerMeldung(null); setLadeStatusText("Lese Datei aus...");
-                try {
-                    const base64String = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(pdfFile); });
-                    setLadeStatusText("KI analysiert Pfarrbrief...");
-                    const body = {
-                        systemInstruction: { parts: [{ text: "Du bist ein präziser Parser für Pfarrbrief-Daten. Extrahiere Gottesdienste in Thalau. Erlaube Hl. Messe, Taufe, Hochzeit, Beerdigung, Osternacht, Christmette. Gib JSON Array zurück mit datum, wochentag, uhrzeit, anlass, gruppe, minis." }] },
-                        contents: [{ parts: [{ text: "Analysiere PDF." }, { inlineData: { mimeType: "application/pdf", data: base64String } }] }],
-                        generationConfig: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "OBJECT", properties: { datum: { type: "STRING" }, wochentag: { type: "STRING" }, uhrzeit: { type: "STRING" }, anlass: { type: "STRING" }, gruppe: { type: "STRING" }, minis: { type: "ARRAY", items: { type: "STRING" } } }, required: ["datum", "wochentag", "uhrzeit", "anlass", "minis"] } } }
-                    };
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-                    const json = await response.json(); if (json.error) throw new Error(json.error.message);
-                    let rawDienste = JSON.parse(json.candidates[0].content.parts[0].text.replace(/^```json/, '').replace(/^```/, '').replace(/```$/, '').trim());
-                    
-                    let wochenGruppen = {}; rawDienste.forEach(d => { if (d.gruppe) wochenGruppen[getWeekIdentifier(d.datum)] = d.gruppe.replace(/Gruppe/i, '').trim(); });
-                    let alleWochen = [...new Set(rawDienste.map(d => getWeekIdentifier(d.datum)))].sort();
-                    let aktuelleGruppe = gruppen[0]?.name || "A"; if (alleWochen.length > 0 && wochenGruppen[alleWochen[0]]) aktuelleGruppe = wochenGruppen[alleWochen[0]];
-                    const gruppenNamen = gruppen.map(g => g.name);
-                    alleWochen.forEach(woche => { if (wochenGruppen[woche]) aktuelleGruppe = wochenGruppen[woche]; wochenGruppen[woche] = aktuelleGruppe; aktuelleGruppe = gruppenNamen[(gruppenNamen.indexOf(aktuelleGruppe) + 1) % gruppenNamen.length]; });
-
-                    let bereinigteDienste = [];
-                    rawDienste.forEach(raw => {
-                        let d = { ...raw, id: crypto.randomUUID(), minis: [], uhrzeit: normalizeTime(raw.uhrzeit || ""), isFromPfarrbuero: false };
-                        let currentAnlass = d.anlass || "Hl. Messe"; let isValid = false;
-                        if (["Hl. Messe", "Taufe", "Hochzeit", "Beerdigung", "Osternacht", "Christmette"].includes(currentAnlass)) isValid = true;
-                        else { let lower = currentAnlass.toLowerCase(); if (lower.includes("taufe")) { currentAnlass = "Taufe"; isValid = true; } else if (lower.includes("hochzeit") || lower.includes("trauung")) { currentAnlass = "Hochzeit"; isValid = true; } else if (lower.includes("beerdigung")) { currentAnlass = "Beerdigung"; isValid = true; } else if (lower.includes("messe") || lower.includes("eucharistie") || lower.includes("hochamt")) { currentAnlass = "Hl. Messe"; isValid = true; } else if (lower.includes("osternacht")) { currentAnlass = "Osternacht"; isValid = true; } else if (lower.includes("christmette")) { currentAnlass = "Christmette"; isValid = true; } else if (lower.includes("gottesdienst")) isValid = true; }
-                        if (isValid) { d.anlass = currentAnlass; let wId = getWeekIdentifier(d.datum); if (wochenGruppen[wId]) d.gruppe = wochenGruppen[wId]; bereinigteDienste.push(d); }
-                    });
-                    setDienste(bereinigteDienste); setAppState('review');
-                } catch (e) { setFehlerMeldung("KI Fehler: " + e.message); } finally { setLaedt(false); }
-            };
-
-            const teileEin = async () => {
-                setLaedt(true); setLadeStatusText("Berechne Einteilung...");
-                setTimeout(() => {
-                    let neueDienste = [...dienste]; let planMaxDate = null;
-                    neueDienste.forEach(d => {
-                        const parsedD = parseDateStr(d.datum); if (parsedD && (!planMaxDate || parsedD > planMaxDate)) planMaxDate = parsedD;
-                        if(d.minis.length === 0 && !d.manuellerBedarf && !d.manuellerText) {
-                            let woche = d.wochentag.toLowerCase();
-                            let count = (woche.includes('sonntag') || woche.includes('feiertag')) ? anzahlSonntags : anzahlWerktags;
-                            
-                            const matchV = vormerkungen.find(v => v.datum === d.datum && (normalizeTime(v.uhrzeit) === normalizeTime(d.uhrzeit) || v.uhrzeit === "" || v.uhrzeit === "Ganztägig"));
-                            if (matchV) { d.minis = [...matchV.minis]; d.isFromPfarrbuero = matchV.isFromPfarrbuero || false; } 
-                            else {
-                                let g = gruppen.find(gr => gr.name === d.gruppe);
-                                if (g && g.mitglieder.length > 0) {
-                                    let verfuegbare = g.mitglieder.filter(m => {
-                                        const regAbw = regelmaessigeAbwesenheiten.find(ra => ra.name === m);
-                                        if (regAbw && parsedD) { if (regAbw.wochentage.includes(parsedD.getDay() === 0 ? 1 : parsedD.getDay() + 1)) return false; } // Mapping JS Day (0=Sun) to UI Day
-                                        if (parsedD) { const urlaub = abwesenheiten.find(ab => { if (ab.name !== m) return false; const s = new Date(ab.start); const e = new Date(ab.end); s.setHours(0,0,0,0); e.setHours(23,59,59,999); return parsedD >= s && parsedD <= e; }); if (urlaub) return false; }
-                                        return true;
-                                    });
-                                    d.minis = verfuegbare.sort(() => 0.5 - Math.random()).slice(0, count);
-                                } else d.minis = [];
-                            }
-                        }
-                    });
-                    setDienste(neueDienste);
-                    if (planMaxDate) { const maxIso = planMaxDate.toISOString().split('T')[0]; if (!planGeneriertBis || new Date(maxIso) > new Date(planGeneriertBis)) setPlanGeneriertBis(maxIso); }
-                    setAppState('assigned'); setLaedt(false);
-                    
-                    // Lade Plan in die Cloud (Web App übernimmt als Chef!)
-                    const planForCloud = neueDienste.map(d => ({ art: 'gottesdienst', wochentag: d.wochentag, datum: d.datum, typ: d.anlass, uhrzeit: d.uhrzeit, messdiener: d.minis.join(', ') || "-" }));
-                    syncDoc('aktuellerPlan', { planDataJson: { stringValue: JSON.stringify(planForCloud) }, timestamp: { stringValue: Date.now().toString() } });
-                }, 1500);
-            };
-
-            const exportierePDF = () => {
-                const { jsPDF } = window.jspdf; const doc = new jsPDF({ unit: 'mm', format: 'a4' }); let y = 20; const margin = 20;
-                doc.setFontSize(22); doc.setFont("helvetica", "bold"); doc.text("Einteilung der Messdiener/innen", 105, y, { align: "center" }); y += 16;
-                
-                const bloecke = getChronologischeBloecke();
-                let firstGroup = ""; let secondGroup = "";
-                if (bloecke.length > 0) firstGroup = bloecke[0].gruppe.replace(/Gruppe/i, '').trim();
-                if (bloecke.length > 1) secondGroup = bloecke[1].gruppe.replace(/Gruppe/i, '').trim();
-                
-                for (const block of bloecke) {
-                    if (y > 270) { doc.addPage(); y = 20; }
-                    doc.setFontSize(14); doc.setFont("helvetica", "bold"); doc.text(`Gruppe ${block.gruppe.replace(/Gruppe/i, '').trim()}`, 105, y, { align: "center" }); y += 10;
-                    for (const dienst of block.dienste) {
-                        let requiredHeight = 14 + (Math.max(dienst.minis.length, 1) * 6);
-                        if (y + requiredHeight > 277) { doc.addPage(); y = 20; }
-                        doc.setFontSize(12); doc.setFont("helvetica", "bold"); let t = dienst.uhrzeit.replace(/h/i, '').trim(); if(!t.toLowerCase().endsWith("uhr")) t+=" Uhr";
-                        doc.text(`${dienst.wochentag} ${dienst.datum} ${dienst.anlass} ${t}`, margin, y); y += 8;
-                        doc.setFont("helvetica", "normal");
-                        if (dienst.manuellerText) { doc.text(dienst.manuellerText, margin, y); y += 6; }
-                        else if (dienst.manuellerBedarf) { doc.text(`Es werden ${dienst.manuellerBedarf} benötigt.`, margin, y); y += 6; }
-                        else if (dienst.minis.length === 0) { doc.text("-", margin, y); y += 6; }
-                        else { for (const mini of dienst.minis) { doc.text(mini, margin, y); y += 6; } }
-                        y += 4;
-                    }
-                }
-
-                if (y > 250) { doc.addPage(); y = 20; } y += 10;
-                doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(0, 0, 0); 
-                doc.text("Wer eingeteilt ist und nicht dienen kann, sucht sich bitte selbstständig eine Vertretung!", 105, y, { align: "center" }); y += 15;
-
-                if (notizen && notizen.length > 0) {
-                    if (y > 240) { doc.addPage(); y = 20; }
-                    doc.setFontSize(16); doc.text("News & Ankündigungen", 105, y, { align: "center" }); y += 12;
-                    notizen.forEach(note => {
-                        if (y > 260) { doc.addPage(); y = 20; }
-                        if (note.titel) { doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.text(note.titel, margin, y); y += 6; }
-                        if (note.inhalt) { doc.setFont("helvetica", "normal"); doc.setFontSize(11); const splitNews = doc.splitTextToSize(note.inhalt, 170); doc.text(splitNews, margin, y); y += (splitNews.length * 5) + 4; }
-                        y += 4; 
-                    });
-                }
-
-                const gruppenText = (firstGroup && secondGroup) ? `In den kommenden zwei Wochen sind Gruppe ${firstGroup} und ${secondGroup} dran. ` : "";
-                const formText = gruppenText + "Wenn Abwesenheiten jetzt schon bekannt sind, trage sie ganz einfach online ein, damit sie beim nächsten Plan automatisch berücksichtigt werden. Klicke dazu einfach auf den Button:";
-                doc.setFont("helvetica", "normal"); doc.setFontSize(11); const splitFormText = doc.splitTextToSize(formText, 150);
-                const boxHeight = 10 + 8 + (splitFormText.length * 5) + 4 + 10 + 10; 
-                if (y + boxHeight > 280) { doc.addPage(); y = 20; }
-                
-                doc.setFillColor(245, 245, 245); doc.roundedRect(20, y, 170, boxHeight, 5, 5, 'F');
-                let currentY = y + 14;
-                doc.setTextColor(0, 0, 0); doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.text("Abwesenheiten eintragen", 105, currentY, { align: "center" }); currentY += 8;
-                doc.setFont("helvetica", "normal"); doc.setFontSize(11);
-                splitFormText.forEach(line => { doc.text(line, 105, currentY, { align: "center" }); currentY += 5; });
-                
-                const buttonY = currentY + 3; 
-                doc.setFillColor(0, 122, 255); doc.roundedRect(105 - 23, buttonY, 46, 10, 3, 3, 'F'); 
-                doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(11);
-                doc.text("Zum Formular", 105, buttonY + 6.5, { align: "center" });
-                const urlParams = new URLSearchParams(window.location.search); const pid = urlParams.get('id') || firebaseProjectId;
-                doc.link(105 - 23, buttonY, 46, 10, { url: window.location.origin + window.location.pathname + '?id=' + pid });
-                doc.save("Messdienerplan.pdf");
-            };
-
             const value = {
                 route, setRoute, activeTab, setActiveTab, isAppLoading, laedt, setLaedt, ladeStatusText, setLadeStatusText, fehlerMeldung, setFehlerMeldung, appState, setAppState,
                 apiKey, setApiKey, adminPassword, setAdminPassword, cloudAdminPassword, setCloudAdminPassword, pfarrbueroPassword, setPfarrbueroPassword, cloudPfarrbueroPassword, setCloudPfarrbueroPassword,
-                geminiModel, setGeminiModel, firebaseProjectId, setFirebaseProjectId, planGeneriertBis, setPlanGeneriertBis, anzahlSonntags, setAnzahlSonntags, anzahlWerktags, setAnzahlWerktags,
-                gruppen, setGruppen, neueMessdiener, setNeueMessdiener, statistik, setStatistik, dienste, setDienste, vormerkungen, setVormerkungen, regelmaessigeAbwesenheiten, setRegelmaessigeAbwesenheiten,
-                abwesenheiten, setAbwesenheiten, notizen, setNotizen, events, setEvents, prozessionen, setProzessionen, pdfFile, setPdfFile, alleMinis, 
-                parseDateStr, normalizeTime, getChronologischeBloecke, leseGottesdienste, teileEin, exportierePDF, syncDoc, syncStatistikToFirebase, resetApp: () => { setAppState('upload'); setDienste([]); setPdfFile(null); }
+                geminiModel, setGeminiModel, firebaseProjectId, setFirebaseProjectId, planGeneriertBis, setPlanGeneriertBis,
+                anzahlSonntags, setAnzahlSonntags, anzahlWerktags, setAnzahlWerktags,
+                gruppen, setGruppen, neueMessdiener, setNeueMessdiener, statistik, setStatistik, dienste, setDienste,
+                vormerkungen, setVormerkungen, regelmaessigeAbwesenheiten, setRegelmaessigeAbwesenheiten,
+                abwesenheiten, setAbwesenheiten, notizen, setNotizen, events, setEvents, prozessionen, setProzessionen,
+                pdfFile, setPdfFile, alleMinis, syncDoc, syncStatistikToFirebase
             };
             return <ViewModelContext.Provider value={value}>{children}</ViewModelContext.Provider>;
         }
         const useViewModel = () => useContext(ViewModelContext);
+
         // ==========================================
-        // 2. LANDING PAGE & PORTALE
+        // 2. LANDING PAGE & SETUP
         // ==========================================
+        function AdminSetupOverlay() {
+            const vm = useViewModel();
+            const [proj, setProj] = useState("");
+            const [key, setKey] = useState("");
+            return (
+                <div className="fixed inset-0 z-[100] bg-[#ececec] flex items-center justify-center p-4">
+                    <div className="bg-white p-10 rounded-3xl shadow-xl max-w-md w-full text-center relative">
+                        <button onClick={() => vm.setRoute('landing')} className="absolute top-6 left-6 text-gray-400 hover:text-gray-800"><i className="fa-solid fa-arrow-left text-xl"></i></button>
+                        <i className="fa-solid fa-database text-5xl text-blue-500 mb-6 mt-4"></i>
+                        <h2 className="text-2xl font-bold text-gray-900 mb-2">Ersteinrichtung</h2>
+                        <p className="text-gray-500 mb-6">Bitte gib die Zugangsdaten für die Datenbank ein.</p>
+                        <input type="text" value={proj} onChange={e=>setProj(e.target.value)} placeholder="Firebase Projekt ID..." className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-4 outline-none focus:border-blue-500 text-center" />
+                        <input type="password" value={key} onChange={e=>setKey(e.target.value)} placeholder="Gemini API Key..." className="w-full border border-gray-300 rounded-xl px-4 py-3 text-lg mb-6 outline-none focus:border-blue-500 text-center" />
+                        <button disabled={!proj.trim() || !key.trim()} onClick={() => { vm.setFirebaseProjectId(proj.trim()); vm.setApiKey(key.trim()); }} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-lg py-3 rounded-xl transition">Speichern & Starten</button>
+                    </div>
+                </div>
+            );
+        }
+
         function LandingPage() {
             const vm = useViewModel();
             const [showAdminLogin, setShowAdminLogin] = useState(false);
@@ -394,15 +248,9 @@
                             <h1 className="text-4xl md:text-5xl font-black text-gray-900 mb-2 tracking-tight">Messdienerplan</h1>
                             <h2 className="text-2xl font-bold text-blue-600 mb-12">Thalau</h2>
                             <div className="w-full space-y-4 px-2 md:px-4">
-                                <button onClick={() => { if(vm.adminPassword && vm.adminPassword === vm.cloudAdminPassword && vm.cloudAdminPassword !== '') vm.setRoute('admin'); else setShowAdminLogin(true); }} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-lg md:text-xl py-4 rounded-2xl shadow-lg transition flex items-center justify-center">
-                                    <i className="fa-solid fa-desktop mr-3"></i>Planer öffnen
-                                </button>
-                                <button onClick={() => { if(vm.cloudPfarrbueroPassword && vm.pfarrbueroPassword !== vm.cloudPfarrbueroPassword) setShowPbLogin(true); else vm.setRoute('pfarrbuero'); }} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center">
-                                    <i className="fa-solid fa-calendar-check mr-3"></i>Messdiener Vormerken
-                                </button>
-                                <button onClick={() => vm.setRoute('abwesenheiten')} className="w-full bg-red-100 hover:bg-red-200 text-red-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center">
-                                    <i className="fa-solid fa-user-clock mr-3"></i>Abwesenheiten eintragen
-                                </button>
+                                <button onClick={() => { if(vm.adminPassword && vm.adminPassword === vm.cloudAdminPassword && vm.cloudAdminPassword !== '') vm.setRoute('admin'); else setShowAdminLogin(true); }} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-lg md:text-xl py-4 rounded-2xl shadow-lg transition flex items-center justify-center"><i className="fa-solid fa-desktop mr-3"></i>Planer öffnen</button>
+                                <button onClick={() => { if(vm.cloudPfarrbueroPassword && vm.pfarrbueroPassword !== vm.cloudPfarrbueroPassword) setShowPbLogin(true); else vm.setRoute('pfarrbuero'); }} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center"><i className="fa-solid fa-calendar-check mr-3"></i>Messdiener Vormerken</button>
+                                <button onClick={() => vm.setRoute('abwesenheiten')} className="w-full bg-red-100 hover:bg-red-200 text-red-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center"><i className="fa-solid fa-user-clock mr-3"></i>Abwesenheiten eintragen</button>
                             </div>
                         </div>
                     </div>
@@ -426,7 +274,7 @@
 
             if (step === 3) {
                 return (
-                    <div className="h-screen w-full bg-gray-50 flex flex-col items-center justify-center p-4">
+                    <div className="min-h-screen w-full bg-gray-50 flex flex-col items-center justify-center p-4">
                         <div className="max-w-2xl w-full text-center bg-white rounded-2xl shadow-sm border border-gray-200 p-8 overflow-y-auto max-h-full">
                             <i className="fa-solid fa-circle-check text-6xl text-green-500 mb-4"></i><h1 className="text-3xl font-bold text-gray-900 mb-2">Erfolgreich gesendet!</h1>
                             <p className="text-gray-600 mb-8">Deine Abwesenheiten wurden gespeichert.</p>
@@ -438,7 +286,7 @@
             }
 
             return (
-                <div className="h-screen w-full flex flex-col bg-[#f0ebf8] overflow-hidden">
+                <div className="min-h-screen w-full flex flex-col bg-[#f0ebf8] overflow-hidden">
                     <div className="flex-1 overflow-y-auto py-8 px-4">
                         <div className="max-w-2xl mx-auto w-full pb-10">
                             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6">
@@ -736,82 +584,85 @@
                 doc.save("Messdienerplan.pdf");
             };
 
+            const resetApp = () => { vm.setAppState('upload'); vm.setDienste([]); vm.setPdfFile(null); };
             const bloecke = getChronologischeBloecke();
-            const isMobile = window.innerWidth < 768;
 
             return (
                 <div className="flex flex-col md:flex-row h-full w-full overflow-hidden relative">
                     <MobileTopBar title="Planer" />
                     
-                    {!isMobile && (
-                        <div className={`w-full ${vm.appState === 'review' ? 'lg:w-[500px] xl:w-[600px]' : 'md:w-[320px] lg:w-[380px]'} bg-white p-6 md:p-8 border-b md:border-b-0 md:border-r border-gray-200 shadow-sm z-10 shrink-0 flex flex-col h-auto md:h-full transition-all duration-300`}>
-                            {vm.appState === 'upload' && (
-                                <div className="flex flex-col h-full justify-center">
-                                    <h2 className="text-2xl font-bold text-gray-900 mb-2">1. Pfarrbrief hochladen</h2>
-                                    <p className="text-gray-500 text-sm mb-6">Wähle das PDF aus, um die Termine per KI auszulesen.</p>
-                                    <label className={`w-full py-12 border-4 border-dashed rounded-3xl flex flex-col items-center justify-center cursor-pointer transition ${vm.pdfFile ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50 hover:bg-gray-100'}`}>
-                                        <i className={`fa-solid ${vm.pdfFile ? 'fa-file-circle-check text-blue-500' : 'fa-file-pdf text-gray-400'} text-5xl mb-4`}></i>
-                                        <span className={`text-sm font-bold text-center px-4 ${vm.pdfFile ? 'text-blue-600' : 'text-gray-500'}`}>{vm.pdfFile ? vm.pdfFile.name : 'PDF hierher ziehen'}</span>
-                                        <input type="file" accept="application/pdf" className="hidden" onChange={e => vm.setPdfFile(e.target.files[0])} />
-                                    </label>
-                                    <button onClick={leseGottesdienste} disabled={vm.laedt || !vm.pdfFile} className="mt-6 w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-4 rounded-xl shadow-md transition flex justify-center items-center">
-                                        {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-2"></i> : <i className="fa-solid fa-wand-magic-sparkles mr-2"></i>}{vm.laedt ? vm.ladeStatusText : 'KI Analyse starten'}
-                                    </button>
-                                    {vm.fehlerMeldung && <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-lg text-xs font-bold border border-red-200"><i className="fa-solid fa-triangle-exclamation mr-2"></i>{vm.fehlerMeldung}</div>}
-                                </div>
-                            )}
-                            {vm.appState === 'review' && (
-                                <div className="flex flex-col h-full justify-center">
-                                    <h2 className="text-2xl font-bold text-gray-900 mb-2">2. Abgleichen</h2>
-                                    <p className="text-gray-500 text-sm mb-4">Prüfe die erkannten Termine. Klicke auf eine Kachel, um sie zu bearbeiten.</p>
-                                    {vm.pdfFile && (
-                                        <div className="w-full flex-1 min-h-[300px] mb-4 border border-gray-200 rounded-xl overflow-hidden bg-gray-100">
-                                            <iframe src={URL.createObjectURL(vm.pdfFile)} className="w-full h-full border-none" title="PDF Vorschau"></iframe>
-                                        </div>
-                                    )}
-                                    <button onClick={() => setEditingDienst({id: crypto.randomUUID(), datum: "", wochentag: "", uhrzeit: "", anlass: "Hl. Messe", minis: []})} className="w-full bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-bold py-3 rounded-xl transition mb-4 shadow-sm"><i className="fa-solid fa-plus mr-2"></i>Termin hinzufügen</button>
+                    <div className={`hidden md:flex flex-col h-full bg-white border-r border-gray-200 shadow-sm z-10 shrink-0 transition-all duration-300 ${vm.appState === 'review' ? 'w-[450px] lg:w-[600px] p-6' : 'w-[320px] lg:w-[380px] p-6 md:p-8'}`}>
+                        {vm.appState === 'upload' && (
+                            <div className="flex flex-col h-full justify-center">
+                                <h2 className="text-2xl font-bold text-gray-900 mb-2">1. Pfarrbrief hochladen</h2>
+                                <p className="text-gray-500 text-sm mb-6">Wähle das PDF aus, um die Termine per KI auszulesen.</p>
+                                <label className={`w-full py-12 border-4 border-dashed rounded-3xl flex flex-col items-center justify-center cursor-pointer transition ${vm.pdfFile ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50 hover:bg-gray-100'}`}>
+                                    <i className={`fa-solid ${vm.pdfFile ? 'fa-file-circle-check text-blue-500' : 'fa-file-pdf text-gray-400'} text-5xl mb-4`}></i>
+                                    <span className={`text-sm font-bold text-center px-4 ${vm.pdfFile ? 'text-blue-600' : 'text-gray-500'}`}>{vm.pdfFile ? vm.pdfFile.name : 'PDF hierher ziehen'}</span>
+                                    <input type="file" accept="application/pdf" className="hidden" onChange={e => vm.setPdfFile(e.target.files[0])} />
+                                </label>
+                                <button onClick={leseGottesdienste} disabled={vm.laedt || !vm.pdfFile} className="mt-6 w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-4 rounded-xl shadow-md transition flex justify-center items-center">
+                                    {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-2"></i> : <i className="fa-solid fa-wand-magic-sparkles mr-2"></i>}{vm.laedt ? vm.ladeStatusText : 'KI Analyse starten'}
+                                </button>
+                                {vm.fehlerMeldung && <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-lg text-xs font-bold border border-red-200"><i className="fa-solid fa-triangle-exclamation mr-2"></i>{vm.fehlerMeldung}</div>}
+                            </div>
+                        )}
+                        {vm.appState === 'review' && (
+                            <div className="flex flex-col h-full">
+                                <h2 className="text-2xl font-bold text-gray-900 mb-2">2. Abgleichen</h2>
+                                <p className="text-gray-500 text-sm mb-4">Prüfe die erkannten Termine. Klicke auf eine Kachel, um sie zu bearbeiten.</p>
+                                {vm.pdfFile && (
+                                    <div className="w-full flex-1 mb-4 border border-gray-200 rounded-xl overflow-hidden bg-gray-100">
+                                        <iframe src={URL.createObjectURL(vm.pdfFile)} className="w-full h-full border-none" title="PDF Vorschau"></iframe>
+                                    </div>
+                                )}
+                                <div className="flex-shrink-0 space-y-3">
+                                    <button onClick={() => setEditingDienst({id: crypto.randomUUID(), datum: "", wochentag: "", uhrzeit: "", anlass: "Hl. Messe", minis: []})} className="w-full bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-bold py-3 rounded-xl transition shadow-sm"><i className="fa-solid fa-plus mr-2"></i>Termin hinzufügen</button>
                                     <button onClick={teileEin} disabled={vm.laedt} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-md transition flex justify-center items-center">
                                         {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-2"></i> : <i className="fa-solid fa-users mr-2"></i>}{vm.laedt ? vm.ladeStatusText : 'Jetzt automatisch Einteilen'}
                                     </button>
-                                    <button onClick={() => { vm.setAppState('upload'); vm.setDienste([]); vm.setPdfFile(null); }} className="mt-4 w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold py-3 rounded-xl transition">Abbrechen & Neustart</button>
+                                    <button onClick={resetApp} className="w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold py-3 rounded-xl transition">Abbrechen & Neustart</button>
                                 </div>
-                            )}
-                            {vm.appState === 'assigned' && (
-                                <div className="flex flex-col h-full justify-center">
-                                    <h2 className="text-2xl font-bold text-gray-900 mb-2">3. Fertig!</h2>
-                                    <p className="text-gray-500 text-sm mb-6">Der Plan ist erstellt. Du kannst manuell korrigieren (Klick auf Kachel) oder das PDF herunterladen.</p>
-                                    <button onClick={exportierePDF} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-md transition mb-4"><i className="fa-solid fa-print mr-2"></i>Als PDF exportieren</button>
-                                    <button onClick={() => { vm.setAppState('upload'); vm.setDienste([]); vm.setPdfFile(null); }} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">Neuen Plan erstellen</button>
-                                </div>
-                            )}
-                        </div>
-                    )}
+                            </div>
+                        )}
+                        {vm.appState === 'assigned' && (
+                            <div className="flex flex-col h-full justify-center">
+                                <h2 className="text-2xl font-bold text-gray-900 mb-2">3. Fertig!</h2>
+                                <p className="text-gray-500 text-sm mb-6">Der Plan ist erstellt. Du kannst manuell korrigieren (Klick auf Kachel) oder das PDF herunterladen.</p>
+                                <button onClick={exportierePDF} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-md transition mb-4"><i className="fa-solid fa-print mr-2"></i>Als PDF exportieren</button>
+                                <button onClick={resetApp} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">Neuen Plan erstellen</button>
+                            </div>
+                        )}
+                    </div>
                     
                     <div className="flex-1 bg-gray-50/50 p-4 md:p-10 overflow-y-auto relative md:h-full">
                         {vm.laedt && vm.appState !== 'upload' && <div className="absolute inset-0 z-50 bg-white/60 backdrop-blur-sm flex items-center justify-center"><i className="fa-solid fa-circle-notch fa-spin text-4xl text-blue-500"></i></div>}
-                        
-                        <div className="max-w-6xl mx-auto pb-20">
-                            <h1 className="text-2xl md:text-4xl font-extrabold text-gray-900 mb-6 hidden md:block">Gottesdienste</h1>
-                            {bloecke.length === 0 ? (
-                                <div className="text-center p-10 bg-white rounded-2xl border border-dashed border-gray-300"><p className="text-gray-500 font-medium">Keine Termine gefunden.</p></div>
-                            ) : (
-                                bloecke.map((block, idx) => (
-                                    <div key={idx} className="mb-10">
-                                        <div className="flex items-center mb-4">
-                                            <select className="bg-transparent text-xl font-bold text-gray-900 outline-none cursor-pointer" value={block.gruppe} onChange={(e) => { const newG = e.target.value; vm.setDienste(vm.dienste.map(d => block.dienste.find(bd => bd.id === d.id) ? {...d, gruppe: newG} : d)); }}>
-                                                <option value="Ohne Gruppe">Nicht zugeordnet</option>
-                                                {vm.gruppen.map(g => <option key={g.name} value={g.name}>Gruppe {g.name}</option>)}
-                                            </select>
+                        {vm.dienste.length === 0 && !vm.laedt ? (
+                            <div className="h-full flex flex-col justify-center items-center text-gray-400 py-10 md:py-20"><i className="fa-solid fa-inbox text-5xl md:text-7xl mb-4 opacity-50"></i><p className="text-lg md:text-xl font-medium text-center">Hier erscheinen die Termine.</p></div>
+                        ) : (
+                            <div className="max-w-6xl mx-auto pb-20">
+                                <h1 className="text-2xl md:text-4xl font-extrabold text-gray-900 mb-6 hidden md:block">Gottesdienste</h1>
+                                {bloecke.length === 0 ? (
+                                    <div className="text-center p-10 bg-white rounded-2xl border border-dashed border-gray-300"><p className="text-gray-500 font-medium">Keine Termine gefunden.</p></div>
+                                ) : (
+                                    bloecke.map((block, idx) => (
+                                        <div key={idx} className="mb-10">
+                                            <div className="flex items-center mb-4">
+                                                <select className="bg-transparent text-xl font-bold text-gray-900 outline-none cursor-pointer" value={block.gruppe} onChange={(e) => { const newG = e.target.value; vm.setDienste(vm.dienste.map(d => block.dienste.find(bd => bd.id === d.id) ? {...d, gruppe: newG} : d)); }}>
+                                                    <option value="Ohne Gruppe">Nicht zugeordnet</option>
+                                                    {vm.gruppen.map(g => <option key={g.name} value={g.name}>Gruppe {g.name}</option>)}
+                                                </select>
+                                            </div>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                                {block.dienste.map(d => (
+                                                    <DienstKarte key={d.id} dienst={d} isAssignedPhase={vm.appState === 'assigned'} onClick={() => setEditingDienst(d)} />
+                                                ))}
+                                            </div>
                                         </div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                                            {block.dienste.map(d => (
-                                                <DienstKarte key={d.id} dienst={d} isAssignedPhase={vm.appState === 'assigned'} onClick={() => setEditingDienst(d)} />
-                                            ))}
-                                        </div>
-                                    </div>
-                                ))
-                            )}
-                        </div>
+                                    ))
+                                )}
+                            </div>
+                        )}
                     </div>
                     {editingDienst && <DienstEditOverlay dienst={editingDienst} onClose={() => setEditingDienst(null)} />}
                 </div>
@@ -821,7 +672,9 @@
         function ProzessionenView() {
             const vm = useViewModel();
             const [selectedId, setSelectedId] = useState(null);
-            const sorted = [...vm.prozessionen].sort((a, b) => (vm.parseDateStr(a.datum)||0) - (vm.parseDateStr(b.datum)||0));
+            
+            const parseDateStr = (str) => { if (!str) return null; const parts = str.match(/\d+/g); if (!parts || parts.length < 2) return null; return new Date(parts.length >= 3 ? parseInt(parts[2]) : new Date().getFullYear(), parseInt(parts[1]) - 1, parseInt(parts[0])); };
+            const sorted = [...vm.prozessionen].sort((a, b) => (parseDateStr(a.datum)||0) - (parseDateStr(b.datum)||0));
 
             const exportiereProzession = (proz) => {
                 const { jsPDF } = window.jspdf; const doc = new jsPDF(); let y = 20;
@@ -847,17 +700,8 @@
                 <div className="flex flex-col md:flex-row h-full w-full">
                     <MobileTopBar title="Prozessionen" />
                     <div className="hidden md:flex w-[300px] bg-white border-r border-gray-200 flex-col h-full z-10 shrink-0">
-                        <div className="p-6">
-                            <h2 className="text-2xl font-bold text-gray-900 mb-4">Prozessionen</h2>
-                            <button onClick={() => { const nId = crypto.randomUUID(); vm.setProzessionen([{id: nId, titel: "Neue Prozession", datum: "", gabenbereitung: ["",""], kollekte: ["",""], flambeaux: ["",""], weihrauch: "", schiffchen: "", kreuz: "", fahneGruenWeiss: ["",""], fahneGelbWeiss1: ["",""], kinderfahnen: ["",""], laternen: ["",""], fahneRotWeiss2: ["",""], hiddenMinis: []}, ...vm.prozessionen]); setSelectedId(nId); }} className="w-full bg-gray-100 font-medium py-2 rounded-lg border border-gray-300"><i className="fa-solid fa-plus mr-2"></i>Neu</button>
-                        </div>
-                        <div className="flex-1 overflow-y-auto px-3 space-y-1">
-                            {sorted.map(p => (
-                                <button key={p.id} onClick={() => setSelectedId(p.id)} className={`w-full text-left px-4 py-3 rounded-lg ${selectedId === p.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}>
-                                    <div className="font-bold truncate">{p.titel}</div><div className="text-sm opacity-80">{p.datum || 'Kein Datum'}</div>
-                                </button>
-                            ))}
-                        </div>
+                        <div className="p-6"><h2 className="text-2xl font-bold text-gray-900 mb-4">Prozessionen</h2><button onClick={() => { const nId = crypto.randomUUID(); vm.setProzessionen([{id: nId, titel: "Neue Prozession", datum: "", gabenbereitung: ["",""], kollekte: ["",""], flambeaux: ["",""], weihrauch: "", schiffchen: "", kreuz: "", fahneGruenWeiss: ["",""], fahneGelbWeiss1: ["",""], kinderfahnen: ["",""], laternen: ["",""], fahneRotWeiss2: ["",""], hiddenMinis: []}, ...vm.prozessionen]); setSelectedId(nId); }} className="w-full bg-gray-100 font-medium py-2 rounded-lg border border-gray-300"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
+                        <div className="flex-1 overflow-y-auto px-3 space-y-1">{sorted.map(p => (<button key={p.id} onClick={() => setSelectedId(p.id)} className={`w-full text-left px-4 py-3 rounded-lg ${selectedId === p.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}><div className="font-bold truncate">{p.titel}</div><div className="text-sm opacity-80">{p.datum || 'Kein Datum'}</div></button>))}</div>
                     </div>
                     <div className="flex-1 bg-gray-50/50 p-4 md:p-10 overflow-y-auto flex flex-col md:flex-row md:space-x-8">
                         {!selectedId ? (
@@ -869,20 +713,11 @@
                                 const available = vm.alleMinis.filter(m => !assigned.includes(m));
                                 return (
                                     <React.Fragment key={proz.id}>
-                                        <div className="w-full md:w-64 flex flex-col shrink-0 mb-6 md:mb-0">
-                                            <h3 className="font-bold text-gray-700 mb-2">Verfügbare Personen</h3>
-                                            <div className="flex md:flex-col gap-2 overflow-x-auto md:overflow-y-auto pb-2 md:pr-2">{available.map(m => <DraggableMini key={m} name={m} />)}</div>
-                                        </div>
+                                        <div className="w-full md:w-64 flex flex-col shrink-0 mb-6 md:mb-0"><h3 className="font-bold text-gray-700 mb-2">Verfügbare Personen</h3><div className="flex md:flex-col gap-2 overflow-x-auto md:overflow-y-auto pb-2 md:pr-2">{available.map(m => <DraggableMini key={m} name={m} />)}</div></div>
                                         <div className="flex-1 bg-white rounded-2xl border border-gray-200 p-4 md:p-8 shadow-sm">
                                             <div className="flex justify-between items-start mb-8">
-                                                <div>
-                                                    <input type="text" value={proz.titel} onChange={e => update('titel', e.target.value)} className="text-2xl md:text-4xl font-black text-gray-900 border-none outline-none focus:ring-0 p-0 mb-1 w-full bg-transparent" placeholder="Titel..." />
-                                                    <input type="text" value={proz.datum} onChange={e => update('datum', e.target.value)} className="text-lg md:text-xl font-bold text-blue-600 border-none outline-none focus:ring-0 p-0 bg-transparent" placeholder="DD.MM.YYYY" />
-                                                </div>
-                                                <div className="flex space-x-2">
-                                                    <button onClick={() => exportiereProzession(proz)} className="bg-purple-100 hover:bg-purple-200 text-purple-700 px-4 py-2 rounded-lg font-bold transition"><i className="fa-solid fa-print md:mr-2"></i><span className="hidden md:inline">PDF</span></button>
-                                                    <button onClick={() => { if(confirm("Prozession löschen?")) { vm.setProzessionen(vm.prozessionen.filter(p => p.id !== proz.id)); setSelectedId(null); } }} className="bg-red-50 hover:bg-red-100 text-red-500 px-4 py-2 rounded-lg font-bold transition"><i className="fa-solid fa-trash"></i></button>
-                                                </div>
+                                                <div><input type="text" value={proz.titel} onChange={e => update('titel', e.target.value)} className="text-2xl md:text-4xl font-black text-gray-900 border-none outline-none focus:ring-0 p-0 mb-1 w-full bg-transparent" placeholder="Titel..." /><input type="text" value={proz.datum} onChange={e => update('datum', e.target.value)} className="text-lg md:text-xl font-bold text-blue-600 border-none outline-none focus:ring-0 p-0 bg-transparent" placeholder="DD.MM.YYYY" /></div>
+                                                <div className="flex space-x-2"><button onClick={() => exportiereProzession(proz)} className="bg-purple-100 hover:bg-purple-200 text-purple-700 px-4 py-2 rounded-lg font-bold transition"><i className="fa-solid fa-print md:mr-2"></i><span className="hidden md:inline">PDF</span></button><button onClick={() => { if(confirm("Prozession löschen?")) { vm.setProzessionen(vm.prozessionen.filter(p => p.id !== proz.id)); setSelectedId(null); } }} className="bg-red-50 hover:bg-red-100 text-red-500 px-4 py-2 rounded-lg font-bold transition"><i className="fa-solid fa-trash"></i></button></div>
                                             </div>
                                             <div className="bg-gray-100 p-4 md:p-6 rounded-xl space-y-4 md:space-y-6">
                                                 <div className="flex justify-center"><div className="w-full md:w-1/2"><DropSlot title="Kreuz" value={proz.kreuz} onDrop={v => update('kreuz', v)} onRemove={() => update('kreuz', '')} /></div></div>
@@ -909,15 +744,14 @@
         function EventsView() {
             const vm = useViewModel();
             const [selectedId, setSelectedId] = useState(null);
-            const sorted = [...vm.events].sort((a, b) => (vm.parseDateStr(a.datum)||0) - (vm.parseDateStr(b.datum)||0));
+            const parseDateStr = (str) => { if (!str) return null; const parts = str.match(/\d+/g); if (!parts || parts.length < 2) return null; return new Date(parts.length >= 3 ? parseInt(parts[2]) : new Date().getFullYear(), parseInt(parts[1]) - 1, parseInt(parts[0])); };
+            const sorted = [...vm.events].sort((a, b) => (parseDateStr(a.datum)||0) - (parseDateStr(b.datum)||0));
             return (
                 <div className="flex flex-col md:flex-row h-full w-full">
                     <MobileTopBar title="Events" />
                     <div className="hidden md:flex w-[300px] bg-white border-r border-gray-200 flex-col h-full z-10 shrink-0">
                         <div className="p-6"><h2 className="text-2xl font-bold text-gray-900 mb-4">Events</h2><button onClick={() => { const nId = crypto.randomUUID(); vm.setEvents([{id: nId, titel: "Neues Event", datum: "", beschreibung: ""}, ...vm.events]); setSelectedId(nId); }} className="w-full bg-gray-100 font-medium py-2 rounded-lg border border-gray-300"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
-                        <div className="flex-1 overflow-y-auto px-3 space-y-1">
-                            {sorted.map(e => <button key={e.id} onClick={() => setSelectedId(e.id)} className={`w-full text-left px-4 py-3 rounded-lg ${selectedId === e.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}><div className="font-bold truncate">{e.titel}</div><div className="text-sm opacity-80">{e.datum}</div></button>)}
-                        </div>
+                        <div className="flex-1 overflow-y-auto px-3 space-y-1">{sorted.map(e => <button key={e.id} onClick={() => setSelectedId(e.id)} className={`w-full text-left px-4 py-3 rounded-lg ${selectedId === e.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-800'}`}><div className="font-bold truncate">{e.titel}</div><div className="text-sm opacity-80">{e.datum}</div></button>)}</div>
                     </div>
                     <div className="flex-1 bg-gray-50/50 p-4 md:p-10 overflow-y-auto">
                         {!selectedId ? (
@@ -925,13 +759,7 @@
                         ) : (
                             vm.events.filter(e => e.id === selectedId).map(ev => (
                                 <div key={ev.id} className="max-w-4xl bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm">
-                                    <div className="flex justify-between items-start mb-6">
-                                        <div className="w-full">
-                                            <input type="text" value={ev.titel} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, titel: e.target.value} : x))} className="text-2xl md:text-4xl font-black text-gray-900 w-full bg-transparent outline-none mb-2" placeholder="Titel..." />
-                                            <input type="text" value={ev.datum} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, datum: e.target.value} : x))} className="text-lg md:text-xl font-bold text-blue-600 w-full bg-transparent outline-none" placeholder="Datum..." />
-                                        </div>
-                                        <button onClick={() => { vm.setEvents(vm.events.filter(x => x.id !== ev.id)); setSelectedId(null); }} className="text-red-500 p-2"><i className="fa-solid fa-trash text-xl"></i></button>
-                                    </div>
+                                    <div className="flex justify-between items-start mb-6"><div className="w-full"><input type="text" value={ev.titel} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, titel: e.target.value} : x))} className="text-2xl md:text-4xl font-black text-gray-900 w-full bg-transparent outline-none mb-2" placeholder="Titel..." /><input type="text" value={ev.datum} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, datum: e.target.value} : x))} className="text-lg md:text-xl font-bold text-blue-600 w-full bg-transparent outline-none" placeholder="Datum..." /></div><button onClick={() => { vm.setEvents(vm.events.filter(x => x.id !== ev.id)); setSelectedId(null); }} className="text-red-500 p-2"><i className="fa-solid fa-trash text-xl"></i></button></div>
                                     <textarea value={ev.beschreibung} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, beschreibung: e.target.value} : x))} className="w-full h-48 bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-700 outline-none focus:border-blue-500 mb-8" placeholder="Beschreibung..."></textarea>
                                 </div>
                             ))
@@ -941,57 +769,26 @@
             );
         }
 
-        function EinstellungenView() {
+        // ==========================================
+        // 8. APP ROUTING
+        // ==========================================
+        function AdminDashboard() {
             const vm = useViewModel();
-            const SectionBox = ({ icon, title, children }) => (
-                <div className="mb-8"><div className="flex items-center space-x-3 mb-4"><div className="w-8 flex justify-center"><i className={`${icon} text-2xl`}></i></div><h2 className="text-xl font-bold text-gray-800">{title}</h2></div><div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">{children}</div></div>
-            );
+            const tiles = [{ id: 'planer', label: 'Planer', icon: 'fa-regular fa-file-lines', color: 'bg-blue-500' }, { id: 'prozessionen', label: 'Prozessionen', icon: 'fa-solid fa-person-walking', color: 'bg-purple-500' }, { id: 'events', label: 'Events', icon: 'fa-solid fa-champagne-glasses', color: 'bg-pink-500' }, { id: 'vormerken', label: 'Vormerken', icon: 'fa-regular fa-calendar-check', color: 'bg-green-500' }, { id: 'abwesenheiten_admin', label: 'Urlaube', icon: 'fa-solid fa-user-clock', color: 'bg-red-500' }, { id: 'statistik', label: 'Statistik', icon: 'fa-solid fa-chart-column', color: 'bg-orange-500' }, { id: 'notizen', label: 'Notizen', icon: 'fa-regular fa-note-sticky', color: 'bg-yellow-500' }, { id: 'messdiener', label: 'Gruppen', icon: 'fa-solid fa-user-group', color: 'bg-indigo-500' }, { id: 'einstellungen', label: 'Optionen', icon: 'fa-solid fa-gear', color: 'bg-gray-500' }, { id: 'werkzeuge', label: 'Tools', icon: 'fa-solid fa-screwdriver-wrench', color: 'bg-teal-500' }];
             return (
-                <div className="h-full flex flex-col">
-                    <MobileTopBar title="Einstellungen" />
-                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
-                        <div className="max-w-3xl mx-auto md:mx-0 pb-12">
-                            <div className="hidden md:block mb-8"><h1 className="text-3xl font-bold text-gray-900">Einstellungen</h1></div>
-                            
-                            <SectionBox icon="fa-solid fa-cloud text-blue-500" title="Cloud Synchronisation">
-                                <input type="text" placeholder="Firebase Projekt-ID..." className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 mb-4 outline-none" value={vm.firebaseProjectId} onChange={e => vm.setFirebaseProjectId(e.target.value)} />
-                                <button onClick={vm.syncStatistikToFirebase} className="bg-gray-100 px-4 py-2 rounded-lg text-sm font-bold border border-gray-300"><i className="fa-solid fa-arrow-rotate-right mr-2"></i>Jetzt manuell synchronisieren</button>
-                            </SectionBox>
-
-                            <SectionBox icon="fa-solid fa-lock text-purple-500" title="Passwörter & Sicherheit">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                                    <div>
-                                        <label className="block text-sm text-gray-500 mb-1">Passwort: Pfarrbüro</label>
-                                        <input type="password" placeholder={vm.cloudPfarrbueroPassword ? "Hinterlegt (Tippen zum Ändern)" : "Kein Passwort vergeben"} className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 outline-none" onChange={e => { vm.setCloudPfarrbueroPassword(e.target.value.trim()); vm.setPfarrbueroPassword(e.target.value.trim()); }} />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm text-gray-500 mb-1">Gemini API Key</label>
-                                        <input type="password" placeholder={vm.apiKey ? "Hinterlegt (Tippen zum Ändern)" : "API Key..."} className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 outline-none" onChange={e => { if (e.target.value.trim() !== '') { vm.setApiKey(e.target.value.trim()); } }} />
-                                    </div>
-                                </div>
-                            </SectionBox>
-
-                            <SectionBox icon="fa-solid fa-users text-orange-500" title="Einteilungs-Mengen">
-                                <div className="flex flex-col md:flex-row md:space-x-12 space-y-4 md:space-y-0">
-                                    <div className="flex items-center justify-between md:justify-start space-x-4 w-full md:w-auto"><span className="text-sm font-medium">Sonntage: {vm.anzahlSonntags}</span><div className="flex border border-gray-300 rounded-lg overflow-hidden"><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlSonntags(Math.max(1, vm.anzahlSonntags - 1))}>-</button><div className="w-px bg-gray-300"></div><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlSonntags(Math.min(10, vm.anzahlSonntags + 1))}>+</button></div></div>
-                                    <div className="flex items-center justify-between md:justify-start space-x-4 w-full md:w-auto"><span className="text-sm font-medium">Werktage: {vm.anzahlWerktags}</span><div className="flex border border-gray-300 rounded-lg overflow-hidden"><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlWerktags(Math.max(1, vm.anzahlWerktags - 1))}>-</button><div className="w-px bg-gray-300"></div><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlWerktags(Math.min(10, vm.anzahlWerktags + 1))}>+</button></div></div>
-                                </div>
-                            </SectionBox>
-                        </div>
-                    </div>
+                <div className="min-h-screen bg-[#f2f2f7] p-6 pb-12 flex flex-col antialiased">
+                    <div className="flex justify-between items-end mb-8 pt-8"><h1 className="text-4xl font-black text-gray-900 tracking-tight">Übersicht</h1><button onClick={() => { vm.setRoute('landing'); vm.setAdminPassword(''); }} className="bg-white px-4 py-2 rounded-full shadow-sm text-sm font-bold text-red-500 border border-gray-200"><i className="fa-solid fa-power-off mr-2"></i>Abmelden</button></div>
+                    <div className="grid grid-cols-2 gap-4">{tiles.map(t => (<div key={t.id} onClick={() => vm.setActiveTab(t.id)} className="ios-card p-6 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform"><div className={`w-14 h-14 ${t.color} text-white rounded-full flex items-center justify-center text-2xl mb-3 shadow-md`}><i className={t.icon}></i></div><span className="font-bold text-gray-800 text-[15px]">{t.label}</span></div>))}</div>
                 </div>
             );
         }
 
-        // ==========================================
-        // 8. APP ROUTING
-        // ==========================================
         function AdminApp() {
             const vm = useViewModel();
             const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
             useEffect(() => { const handleResize = () => setIsMobile(window.innerWidth < 768); window.addEventListener('resize', handleResize); return () => window.removeEventListener('resize', handleResize); }, []);
-            
-            if (isMobile) {
+            if (isMobile && (!vm.activeTab || vm.activeTab === 'menu')) return <AdminDashboard />;
+            if (isMobile && vm.activeTab === 'planer') {
                 return (
                     <div className="flex h-screen w-full bg-macBg text-[#1d1d1f] antialiased">
                         <div className="flex-1 flex flex-col bg-white overflow-hidden z-10 relative">
@@ -1000,10 +797,9 @@
                     </div>
                 );
             }
-
             return (
                 <div className="flex h-screen w-full bg-macBg text-[#1d1d1f] antialiased">
-                    <Sidebar/>
+                    {!isMobile && <Sidebar/>}
                     <div className="flex-1 flex flex-col bg-white overflow-hidden shadow-[-4px_0_15px_rgba(0,0,0,0.05)] z-10 relative">
                         {vm.activeTab === 'planer' && <PlanerView/>}
                         {vm.activeTab === 'prozessionen' && <ProzessionenView/>}
