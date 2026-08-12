@@ -772,6 +772,220 @@
         // ==========================================
         // 8. APP ROUTING
         // ==========================================
+        // ==========================================
+        // 5. DIE FEHLENDEN ADMIN VIEWS
+        // ==========================================
+
+        function AbwesenheitenAdminView() {
+            const vm = useViewModel();
+            const sorted = [...vm.abwesenheiten].sort((a,b) => new Date(a.start) - new Date(b.start));
+            const fmt = (iso) => { if(!iso)return""; const p=iso.split('-'); return p.length===3?`${p[2]}.${p[1]}.${p[0]}`:iso; };
+            
+            return (
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Abwesenheiten" />
+                    <div className="flex-1 overflow-y-auto p-4 md:p-10 bg-gray-50/50">
+                        <div className="max-w-5xl mx-auto md:mx-0 pb-12">
+                            <div className="hidden md:flex justify-between items-end mb-8">
+                                <div><h1 className="text-3xl font-bold text-gray-900">Eingetragene Abwesenheiten</h1><p className="text-gray-500 mt-1">Hier siehst du alle Urlaube, die über das Online-Formular eingereicht wurden.</p></div>
+                                <button onClick={() => { if(confirm("Alle abgelaufenen Einträge löschen?")) { const today = new Date(); today.setHours(0,0,0,0); vm.setAbwesenheiten(vm.abwesenheiten.filter(a => new Date(a.end || a.start) >= today)); } }} className="bg-white border border-gray-300 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition hover:bg-gray-50"><i className="fa-solid fa-broom mr-2"></i>Alte löschen</button>
+                            </div>
+                            {sorted.length === 0 ? (
+                                <div className="text-center p-8 bg-white border border-dashed border-gray-300 rounded-xl mb-8"><p className="text-gray-500">Keine Abwesenheiten eingetragen.</p></div>
+                            ) : (
+                                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                                    <div className="divide-y divide-gray-100">
+                                        {sorted.map(abw => (
+                                            <div key={abw.id} className="p-4 md:p-6 flex justify-between items-center hover:bg-gray-50">
+                                                <div>
+                                                    <div className="font-bold text-gray-800 text-lg">{abw.name}</div>
+                                                    <div className="text-sm text-gray-500 mt-1"><i className="fa-regular fa-calendar mr-2"></i>{abw.type === 'single' ? fmt(abw.start) : `${fmt(abw.start)} - ${fmt(abw.end)}`}</div>
+                                                </div>
+                                                <button onClick={() => { if(confirm("Eintrag löschen?")) vm.setAbwesenheiten(vm.abwesenheiten.filter(x => x.id !== abw.id)); }} className="text-red-400 hover:text-red-600 p-2"><i className="fa-solid fa-trash text-lg"></i></button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function StatistikView() {
+            const vm = useViewModel();
+            const orderedNames = Object.keys(vm.statistik).sort((a, b) => vm.statistik[b] - vm.statistik[a]);
+            return (
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Statistik" />
+                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
+                        <div className="max-w-4xl mx-auto md:mx-0">
+                            <div className="hidden md:flex justify-between items-end mb-8">
+                                <div><h1 className="text-3xl font-bold text-gray-900">Einsatz-Statistik</h1></div>
+                                <button className="bg-white border border-gray-300 hover:bg-red-50 text-gray-800 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition" onClick={() => { if(confirm("Alle Zähler nullen?")) { let neu = {}; vm.gruppen.forEach(g => g.mitglieder.forEach(m => neu[m] = 0)); vm.setStatistik(neu); vm.syncStatistikToFirebase(); } }}><i className="fa-solid fa-arrow-rotate-left mr-2"></i>Nullen</button>
+                            </div>
+                            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-10">
+                                <div className="divide-y divide-gray-100">
+                                    {orderedNames.map((name, idx) => (
+                                        <div key={name} className={`flex justify-between items-center px-4 md:px-10 py-3 md:py-4 ${idx % 2 === 0 ? 'bg-blue-50/20' : 'bg-white'}`}>
+                                            <span className="font-semibold text-gray-800 md:text-lg">{name}</span>
+                                            <div className="flex items-center space-x-4 md:space-x-6">
+                                                <span className="text-xl md:text-2xl font-bold text-gray-900 w-6 md:w-8 text-right font-mono">{vm.statistik[name]}</span>
+                                                <div className="flex space-x-2">
+                                                    <button onClick={() => { vm.setStatistik({...vm.statistik, [name]: Math.max(0, vm.statistik[name] - 1)}); vm.syncStatistikToFirebase(); }} className="text-red-500 text-xl md:text-2xl"><i className="fa-solid fa-circle-minus"></i></button>
+                                                    <button onClick={() => { vm.setStatistik({...vm.statistik, [name]: vm.statistik[name] + 1}); vm.syncStatistikToFirebase(); }} className="text-green-500 text-xl md:text-2xl"><i className="fa-solid fa-circle-plus"></i></button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function NotizenView() {
+            const vm = useViewModel();
+            const addNote = () => vm.setNotizen([{ id: crypto.randomUUID(), titel: "Neue Notiz", inhalt: "" }, ...vm.notizen]);
+            return (
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Notizen" />
+                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
+                        <div className="max-w-6xl mx-auto md:mx-0">
+                            <div className="hidden md:flex justify-between items-end mb-8">
+                                <div><h1 className="text-3xl font-bold text-gray-900">Notizen</h1></div>
+                                <button onClick={addNote} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition"><i className="fa-solid fa-plus mr-2"></i>Notiz hinzufügen</button>
+                            </div>
+                            <div className="md:hidden mb-6"><button onClick={addNote} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md"><i className="fa-solid fa-plus mr-2"></i>Neu</button></div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6 pb-10">
+                                {vm.notizen.map(note => (
+                                    <div key={note.id} className="bg-yellow-100/80 rounded-2xl border border-yellow-300 p-5 shadow-sm">
+                                        <div className="flex justify-between items-center mb-3">
+                                            <input type="text" value={note.titel} onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, titel: e.target.value} : n))} className="font-bold text-lg bg-transparent border-none w-full text-gray-800 outline-none" placeholder="Titel..." />
+                                            <button onClick={() => vm.setNotizen(vm.notizen.filter(n => n.id !== note.id))} className="text-red-500/70 hover:text-red-600 ml-2"><i className="fa-solid fa-trash"></i></button>
+                                        </div>
+                                        <textarea value={note.inhalt} onChange={e => vm.setNotizen(vm.notizen.map(n => n.id === note.id ? {...n, inhalt: e.target.value} : n))} placeholder="Hier Notizen eintragen..." className="w-full h-32 md:h-48 bg-transparent border-none resize-none outline-none text-gray-700 text-sm md:text-base"></textarea>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function WerkzeugeView() {
+            const vm = useViewModel();
+            const [kopiert, setKopiert] = useState(false);
+            const [kiLoading, setKiLoading] = useState(false);
+
+            const handleCopy = () => {
+                const alle = vm.gruppen.flatMap(g => g.mitglieder).sort().join("\n");
+                navigator.clipboard.writeText(alle); setKopiert(true); setTimeout(() => setKopiert(false), 2000);
+            };
+
+            const handleKiImport = async () => {
+                if(!vm.apiKey) { alert("Bitte erst den Gemini API Key hinterlegen!"); return; }
+                try {
+                    const text = await navigator.clipboard.readText();
+                    if(!text) { alert("Zwischenablage ist leer!"); return; }
+                    if(confirm("Deine aktuellen Gruppen werden durch die Daten aus der Zwischenablage überschrieben. Fortfahren?")) {
+                        setKiLoading(true);
+                        const body = { contents: [{ parts: [{ text: `Extrahiere Namen und weise sie Gruppen zu. TEXT: ${text}` }] }], generationConfig: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "OBJECT", properties: { name: { type: "STRING" }, mitglieder: { type: "ARRAY", items: { type: "STRING" } } }, required: ["name", "mitglieder"] } } } };
+                        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${vm.geminiModel}:generateContent?key=${vm.apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+                        const json = await response.json();
+                        let cleanJsonString = json.candidates[0].content.parts[0].text.replace(/^```json/, '').replace(/^```/, '').replace(/```$/, '').trim();
+                        const importierteGruppen = JSON.parse(cleanJsonString);
+                        const neueGruppen = importierteGruppen.map(g => ({ id: crypto.randomUUID(), name: g.name, mitglieder: g.mitglieder }));
+                        vm.setGruppen(neueGruppen);
+                        let newStat = {...vm.statistik}; neueGruppen.forEach(g => g.mitglieder.forEach(m => { if(newStat[m] === undefined) newStat[m] = 0; })); vm.setStatistik(newStat);
+                        alert("Gruppen erfolgreich importiert!");
+                    }
+                } catch(e) { alert("Fehler: " + e.message); } finally { setKiLoading(false); }
+            };
+
+            const exportiereGruppenPDF = () => {
+                const { jsPDF } = window.jspdf; const doc = new jsPDF({ unit: 'mm', format: 'a4' }); let currentY_mm = 20;
+                doc.setFontSize(20); doc.setFont("helvetica", "bold"); doc.text("Übersicht: Alle Messdiener-Gruppen", 105, currentY_mm, { align: "center" }); currentY_mm += 15;
+                for (const gruppe of vm.gruppen) {
+                    if (currentY_mm + 15 > 280) { doc.addPage(); currentY_mm = 20; }
+                    doc.setFontSize(16); doc.setFont("helvetica", "bold"); doc.text(`Gruppe ${gruppe.name}`, 20, currentY_mm); currentY_mm += 8;
+                    doc.setFontSize(12); doc.setFont("helvetica", "normal");
+                    for (const mini of gruppe.mitglieder) {
+                        if (currentY_mm + 6 > 280) { doc.addPage(); currentY_mm = 20; }
+                        const prefix = vm.neueMessdiener.includes(mini) ? "* " : "• "; doc.text(`${prefix}${mini}`, 25, currentY_mm); currentY_mm += 6;
+                    }
+                    currentY_mm += 8;
+                }
+                doc.save("Gruppenliste.pdf");
+            };
+
+            const ToolBox = ({ icon, title, desc, btnText, onClick, colorClass, btnClass, loading }) => (
+                <div className="bg-white rounded-xl border border-gray-200 p-5 md:p-6 shadow-sm mb-4 md:mb-6">
+                    <div className="flex items-center space-x-3 mb-2"><i className={`${icon} ${colorClass} text-2xl w-8 text-center`}></i><h2 className="text-lg md:text-xl font-bold text-gray-800">{title}</h2></div>
+                    <p className="text-sm md:text-base text-gray-500 mb-5 ml-11">{desc}</p>
+                    <div className="ml-11"><button onClick={onClick} disabled={loading} className={`${btnClass} px-4 py-2 rounded-lg text-sm font-bold shadow-sm w-full md:w-auto disabled:opacity-50`}>{loading ? 'Verarbeite...' : btnText}</button></div>
+                </div>
+            );
+
+            return (
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Werkzeuge" />
+                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
+                        <div className="max-w-3xl mx-auto md:mx-0">
+                            <div className="hidden md:block mb-8"><h1 className="text-3xl font-bold text-gray-900">Werkzeuge</h1></div>
+                            <ToolBox icon="fa-solid fa-copy" colorClass="text-blue-500" title="Namen kopieren" desc="Kopiert alle Messdiener in die Zwischenablage." btnText={kopiert ? "Kopiert!" : "Kopieren"} onClick={handleCopy} btnClass="bg-blue-600 text-white" />
+                            <ToolBox icon="fa-solid fa-file-pdf" colorClass="text-orange-500" title="Gruppen-Liste (PDF)" desc="Erstellt ein druckfertiges PDF." btnText="Herunterladen" onClick={exportiereGruppenPDF} btnClass="bg-orange-500 text-white" />
+                            <ToolBox icon="fa-solid fa-wand-magic-sparkles" colorClass="text-purple-500" title="KI Import" desc="Kopiere einen Text mit Gruppen und Namen. Die KI überschreibt deine aktuellen Gruppen." btnText="Aus Zwischenablage importieren" onClick={handleKiImport} loading={kiLoading} btnClass="bg-purple-600 text-white" />
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function EinstellungenView() {
+            const vm = useViewModel();
+            const SectionBox = ({ icon, title, children }) => (
+                <div className="mb-8"><div className="flex items-center space-x-3 mb-4"><div className="w-8 flex justify-center"><i className={`${icon} text-2xl`}></i></div><h2 className="text-xl font-bold text-gray-800">{title}</h2></div><div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">{children}</div></div>
+            );
+            return (
+                <div className="h-full flex flex-col">
+                    <MobileTopBar title="Einstellungen" />
+                    <div className="flex-1 overflow-y-auto p-6 md:p-10 bg-gray-50/50">
+                        <div className="max-w-3xl mx-auto md:mx-0 pb-12">
+                            <div className="hidden md:block mb-8"><h1 className="text-3xl font-bold text-gray-900">Einstellungen</h1></div>
+                            
+                            <SectionBox icon="fa-solid fa-cloud text-blue-500" title="Cloud Synchronisation">
+                                <input type="text" placeholder="Firebase Projekt-ID..." className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 mb-4 outline-none" value={vm.firebaseProjectId} onChange={e => vm.setFirebaseProjectId(e.target.value)} />
+                            </SectionBox>
+
+                            <SectionBox icon="fa-solid fa-lock text-purple-500" title="Passwörter & Sicherheit">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                    <div>
+                                        <label className="block text-sm text-gray-500 mb-1">Passwort: Pfarrbüro</label>
+                                        <input type="password" placeholder={vm.cloudPfarrbueroPassword ? "Hinterlegt (Tippen zum Ändern)" : "Kein Passwort vergeben"} className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 outline-none" onChange={e => { vm.setCloudPfarrbueroPassword(e.target.value.trim()); vm.setPfarrbueroPassword(e.target.value.trim()); }} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm text-gray-500 mb-1">Gemini API Key</label>
+                                        <input type="password" placeholder={vm.apiKey ? "Hinterlegt (Tippen zum Ändern)" : "API Key..."} className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:border-blue-500 outline-none" onChange={e => { if (e.target.value.trim() !== '') { vm.setApiKey(e.target.value.trim()); } }} />
+                                    </div>
+                                </div>
+                            </SectionBox>
+
+                            <SectionBox icon="fa-solid fa-users text-orange-500" title="Einteilungs-Mengen">
+                                <div className="flex flex-col md:flex-row md:space-x-12 space-y-4 md:space-y-0">
+                                    <div className="flex items-center justify-between md:justify-start space-x-4 w-full md:w-auto"><span className="text-sm font-medium">Sonntage: {vm.anzahlSonntags}</span><div className="flex border border-gray-300 rounded-lg overflow-hidden"><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlSonntags(Math.max(1, vm.anzahlSonntags - 1))}>-</button><div className="w-px bg-gray-300"></div><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlSonntags(Math.min(10, vm.anzahlSonntags + 1))}>+</button></div></div>
+                                    <div className="flex items-center justify-between md:justify-start space-x-4 w-full md:w-auto"><span className="text-sm font-medium">Werktage: {vm.anzahlWerktags}</span><div className="flex border border-gray-300 rounded-lg overflow-hidden"><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlWerktags(Math.max(1, vm.anzahlWerktags - 1))}>-</button><div className="w-px bg-gray-300"></div><button className="px-3 py-1 bg-gray-100 hover:bg-gray-200" onClick={() => vm.setAnzahlWerktags(Math.min(10, vm.anzahlWerktags + 1))}>+</button></div></div>
+                                </div>
+                            </SectionBox>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
         function AdminDashboard() {
             const vm = useViewModel();
             const tiles = [{ id: 'planer', label: 'Planer', icon: 'fa-regular fa-file-lines', color: 'bg-blue-500' }, { id: 'prozessionen', label: 'Prozessionen', icon: 'fa-solid fa-person-walking', color: 'bg-purple-500' }, { id: 'events', label: 'Events', icon: 'fa-solid fa-champagne-glasses', color: 'bg-pink-500' }, { id: 'vormerken', label: 'Vormerken', icon: 'fa-regular fa-calendar-check', color: 'bg-green-500' }, { id: 'abwesenheiten_admin', label: 'Urlaube', icon: 'fa-solid fa-user-clock', color: 'bg-red-500' }, { id: 'statistik', label: 'Statistik', icon: 'fa-solid fa-chart-column', color: 'bg-orange-500' }, { id: 'notizen', label: 'Notizen', icon: 'fa-regular fa-note-sticky', color: 'bg-yellow-500' }, { id: 'messdiener', label: 'Gruppen', icon: 'fa-solid fa-user-group', color: 'bg-indigo-500' }, { id: 'einstellungen', label: 'Optionen', icon: 'fa-solid fa-gear', color: 'bg-gray-500' }, { id: 'werkzeuge', label: 'Tools', icon: 'fa-solid fa-screwdriver-wrench', color: 'bg-teal-500' }];
