@@ -52,7 +52,7 @@
 
         function AutocompleteField({ value, onChange, suggestions, placeholder, className }) {
             const [isOpen, setIsOpen] = useState(false); const wrapperRef = useRef(null);
-            const filtered = suggestions.filter(s => s.toLowerCase().includes(value.toLowerCase()) && s.toLowerCase() !== value.toLowerCase());
+            const filtered = (suggestions || []).filter(s => s.toLowerCase().includes((value||'').toLowerCase()) && s.toLowerCase() !== (value||'').toLowerCase());
             useEffect(() => { function handleClickOutside(e) { if (wrapperRef.current && !wrapperRef.current.contains(e.target)) setIsOpen(false); } document.addEventListener("mousedown", handleClickOutside); return () => document.removeEventListener("mousedown", handleClickOutside); }, []);
             return (
                 <div ref={wrapperRef} className="relative w-full">
@@ -62,11 +62,45 @@
             );
         }
 
+        function DraggableMini({ name }) {
+            return (
+                <div 
+                    draggable
+                    onDragStart={(e) => e.dataTransfer.setData("text/plain", name)}
+                    className="bg-white border border-gray-200 shadow-sm rounded-lg px-3 py-2 text-sm font-semibold text-gray-800 cursor-grab active:cursor-grabbing hover:bg-blue-50 transition shrink-0 select-none"
+                >
+                    <i className="fa-solid fa-grip-vertical text-gray-300 mr-2"></i>{name}
+                </div>
+            );
+        }
+
+        function DropSlot({ title, value, onDrop, onRemove }) {
+            const [isOver, setIsOver] = useState(false);
+            return (
+                <div 
+                    onDragOver={(e) => { e.preventDefault(); setIsOver(true); }}
+                    onDragLeave={() => setIsOver(false)}
+                    onDrop={(e) => { e.preventDefault(); setIsOver(false); const data = e.dataTransfer.getData("text/plain"); if(data) onDrop(data); }}
+                    className={`p-3 rounded-xl border-2 border-dashed transition flex flex-col items-center justify-center min-h-[70px] ${isOver ? 'border-blue-500 bg-blue-50' : value ? 'border-gray-300 bg-white' : 'border-gray-200 bg-white/50'}`}
+                >
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">{title}</span>
+                    {value ? (
+                        <div className="flex items-center space-x-2 bg-blue-50 text-blue-800 px-3 py-1 rounded-lg font-bold text-sm">
+                            <span>{value}</span>
+                            <button type="button" onClick={onRemove} className="text-red-400 hover:text-red-600"><i className="fa-solid fa-xmark"></i></button>
+                        </div>
+                    ) : (
+                        <span className="text-xs text-gray-400 italic">Hierhin ziehen</span>
+                    )}
+                </div>
+            );
+        }
+
         const ViewModelContext = createContext();
 
         function ViewModelProvider({ children }) {
             const [route, setRoute] = useState('landing'); 
-            const [activeTab, setActiveTab] = useState('planer'); 
+            const [activeTab, setActiveTab] = useState(window.innerWidth < 768 ? 'menu' : 'planer'); 
             const [isAppLoading, setIsAppLoading] = useState(true);
             const [appState, setAppState] = useAppStorage('appStateRaw', 'upload'); 
             const [laedt, setLaedt] = useState(false);
@@ -105,7 +139,24 @@
                 if (!firebaseProjectId.trim()) return;
                 try {
                     const fetchDoc = async (docName, setter, parser) => { try { const res = await fetch(getFbUrl(docName)); const data = await res.json(); if(data.fields) setter(parser(data.fields)); } catch(e){} };
-                    await fetchDoc('config', f => { if(f.adminPassword) setCloudAdminPassword(f.adminPassword.stringValue); if(f.pfarrbueroPassword) setCloudPfarrbueroPassword(f.pfarrbueroPassword.stringValue); if(f.planGeneriertBis) setPlanGeneriertBis(f.planGeneriertBis.stringValue); }, f=>f);
+                    await fetchDoc('config', f => { 
+                        let cAdmin = '';
+                        let cPb = '';
+                        if(f.adminPassword) { cAdmin = f.adminPassword.stringValue; setCloudAdminPassword(cAdmin); } 
+                        if(f.pfarrbueroPassword) { cPb = f.pfarrbueroPassword.stringValue; setCloudPfarrbueroPassword(cPb); } 
+                        if(f.planGeneriertBis) setPlanGeneriertBis(f.planGeneriertBis.stringValue);
+
+                        // Automatischer Login, wenn lokal bereits das richtige Admin-Passwort hinterlegt ist
+                        try {
+                            const localPwd = window.localStorage.getItem('adminPasswordLocal') ? JSON.parse(window.localStorage.getItem('adminPasswordLocal')) : '';
+                            if (localPwd && cAdmin && localPwd === cAdmin) {
+                                setRoute('admin');
+                                if (window.innerWidth < 768) {
+                                    setActiveTab('menu');
+                                }
+                            }
+                        } catch(err) {}
+                    }, f=>f);
                     await fetchDoc('statistik', setStatistik, f => { let s={}; for(const [k,v] of Object.entries(f)) s[k]=parseInt(v.integerValue); return s; });
                     await fetchDoc('gruppen', f => { if(f.gruppenJson) setGruppen(JSON.parse(f.gruppenJson.stringValue)); if(f.neueMessdienerJson) setNeueMessdiener(JSON.parse(f.neueMessdienerJson.stringValue)); }, f=>f);
                     await fetchDoc('vormerkungen', f => { if(f.vormerkungenJson) setVormerkungen(JSON.parse(f.vormerkungenJson.stringValue)); }, f=>f);
@@ -115,7 +166,6 @@
                     await fetchDoc('prozessionen', f => { if(f.prozessionenJson) setProzessionen(JSON.parse(f.prozessionenJson.stringValue)); }, f=>f);
                     await fetchDoc('notizen', f => { if(f.notizenJson) setNotizen(JSON.parse(f.notizenJson.stringValue)); }, f=>f);
                     
-                   // Zieht automatisch den aktuellen Plan aus der Firebase (z.B. von Mac App)
                     await fetchDoc('aktuellerPlan', f => { 
                         if(f.planDataJson) { 
                             const parsed = JSON.parse(f.planDataJson.stringValue);
@@ -126,7 +176,6 @@
                                     wochentag: d.wochentag || "", 
                                     uhrzeit: d.uhrzeit || "",
                                     anlass: d.typ || d.anlass || "Hl. Messe", 
-                                    // FIX: Zieht jetzt die korrekte Gruppe, statt immer "A" zu setzen!
                                     gruppe: d.gruppe && d.gruppe !== "Z" && d.gruppe !== "" ? d.gruppe : "Ohne Gruppe", 
                                     minis: d.messdiener && d.messdiener !== "-" ? d.messdiener.split(',').map(n=>n.trim()) : (d.minis || []),
                                     manuellerBedarf: d.manuellerBedarf || null, 
@@ -207,10 +256,19 @@
 
             const handleAdminLogin = () => {
                 if (!vm.cloudAdminPassword) {
-                    if(pwdInput.length > 3) { vm.setCloudAdminPassword(pwdInput); vm.setAdminPassword(pwdInput); vm.setRoute('admin'); } 
+                    if(pwdInput.length > 3) { 
+                        vm.setCloudAdminPassword(pwdInput); 
+                        vm.setAdminPassword(pwdInput); 
+                        vm.setRoute('admin'); 
+                        if (window.innerWidth < 768) vm.setActiveTab('menu');
+                    } 
                     else alert("Passwort muss mindestens 4 Zeichen lang sein.");
                 } else {
-                    if (pwdInput === vm.cloudAdminPassword) { vm.setAdminPassword(pwdInput); vm.setRoute('admin'); } 
+                    if (pwdInput === vm.cloudAdminPassword) { 
+                        vm.setAdminPassword(pwdInput); 
+                        vm.setRoute('admin'); 
+                        if (window.innerWidth < 768) vm.setActiveTab('menu');
+                    } 
                     else alert("Falsches Passwort!");
                 }
             };
@@ -258,7 +316,14 @@
                             <h1 className="text-4xl md:text-5xl font-black text-gray-900 mb-2 tracking-tight">Messdienerplan</h1>
                             <h2 className="text-2xl font-bold text-blue-600 mb-12">Thalau</h2>
                             <div className="w-full space-y-4 px-2 md:px-4">
-                                <button onClick={() => { if(vm.adminPassword && vm.adminPassword === vm.cloudAdminPassword && vm.cloudAdminPassword !== '') vm.setRoute('admin'); else setShowAdminLogin(true); }} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-lg md:text-xl py-4 rounded-2xl shadow-lg transition flex items-center justify-center"><i className="fa-solid fa-desktop mr-3"></i>Planer öffnen</button>
+                                <button onClick={() => { 
+                                    if(vm.adminPassword && vm.adminPassword === vm.cloudAdminPassword && vm.cloudAdminPassword !== '') {
+                                        vm.setRoute('admin');
+                                        if(window.innerWidth < 768) vm.setActiveTab('menu');
+                                    } else {
+                                        setShowAdminLogin(true); 
+                                    }
+                                }} className="w-full bg-gray-900 hover:bg-black text-white font-bold text-lg md:text-xl py-4 rounded-2xl shadow-lg transition flex items-center justify-center"><i className="fa-solid fa-desktop mr-3"></i>Planer öffnen</button>
                                 <button onClick={() => { if(vm.cloudPfarrbueroPassword && vm.pfarrbueroPassword !== vm.cloudPfarrbueroPassword) setShowPbLogin(true); else vm.setRoute('pfarrbuero'); }} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center"><i className="fa-solid fa-calendar-check mr-3"></i>Messdiener vormerken</button>
                                 <button onClick={() => vm.setRoute('abwesenheiten')} className="w-full bg-red-100 hover:bg-red-200 text-red-800 font-bold text-lg md:text-xl py-4 rounded-2xl transition flex items-center justify-center"><i className="fa-solid fa-user-clock mr-3"></i>Abwesenheiten eintragen</button>
                             </div>
@@ -274,13 +339,48 @@
             const [name, setName] = useState("");
             const [neueEintraege, setNeueEintraege] = useState([{ id: crypto.randomUUID(), type: 'single', start: '', end: '' }]);
             const [showExisting, setShowExisting] = useState(false);
+            const [showWarningModal, setShowWarningModal] = useState(false);
 
             const handleNameSubmit = () => { if(!vm.alleMinis.includes(name.trim())) { alert("Name nicht in der Datenbank gefunden! Bitte wähle deinen Namen aus der Vorschlagsliste aus."); return; } setStep(2); };
-            const handleSubmitFinal = () => { const valide = neueEintraege.filter(e => e.start !== ""); if (valide.length === 0) { alert("Bitte mindestens ein gültiges Datum eintragen!"); return; } const neueAbwesenheiten = valide.map(e => ({ id: crypto.randomUUID(), name: name.trim(), start: e.start, end: e.type === 'period' ? e.end : e.start, type: e.type })); vm.setAbwesenheiten([...vm.abwesenheiten, ...neueAbwesenheiten]); setStep(3); };
 
             const formatDate = (isoStr) => { if (!isoStr) return ""; const p = isoStr.split('-'); return p.length===3?`${p[2]}.${p[1]}.${p[0]}`:isoStr; };
             const isLocked = (dateStr) => { if (!vm.planGeneriertBis || !dateStr) return false; return new Date(dateStr) <= new Date(vm.planGeneriertBis); };
             const existingEntries = (vm.abwesenheiten || []).filter(a => a.name === name.trim() && new Date(a.start) >= new Date(new Date().setHours(0,0,0,0))).sort((a, b) => new Date(a.start) - new Date(b.start));
+
+            const saveAndFinish = () => {
+                const valide = neueEintraege.filter(e => e.start !== "");
+                const neueAbwesenheiten = valide.map(e => ({ 
+                    id: crypto.randomUUID(), 
+                    name: name.trim(), 
+                    start: e.start, 
+                    end: e.type === 'period' ? e.end : e.start, 
+                    type: e.type 
+                }));
+                vm.setAbwesenheiten([...vm.abwesenheiten, ...neueAbwesenheiten]);
+                setShowWarningModal(false);
+                setStep(3);
+            };
+
+            const handleSubmitFinal = () => { 
+                const valide = neueEintraege.filter(e => e.start !== ""); 
+                if (valide.length === 0) { alert("Bitte mindestens ein gültiges Datum eintragen!"); return; } 
+
+                // Prüfen ob einer der Tage bereits im generierten Plan liegt
+                const hatUeberschneidung = valide.some(e => {
+                    if (!vm.planGeneriertBis || !e.start) return false;
+                    const planLimit = new Date(vm.planGeneriertBis);
+                    planLimit.setHours(23, 59, 59, 999);
+                    const startDate = new Date(e.start);
+                    startDate.setHours(0, 0, 0, 0);
+                    return startDate <= planLimit;
+                });
+
+                if (hatUeberschneidung) {
+                    setShowWarningModal(true);
+                } else {
+                    saveAndFinish();
+                }
+            };
 
             if (step === 3) {
                 return (
@@ -296,7 +396,7 @@
             }
 
             return (
-                <div className="min-h-screen w-full flex flex-col bg-[#f0ebf8] overflow-hidden">
+                <div className="min-h-screen w-full flex flex-col bg-[#f0ebf8] overflow-hidden relative">
                     <div className="flex-1 overflow-y-auto py-8 px-4">
                         <div className="max-w-2xl mx-auto w-full pb-10">
                             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6">
@@ -323,6 +423,33 @@
                             )}
                         </div>
                     </div>
+
+                    {/* Pop-Up Modal für bereits erstellten Plan */}
+                    {showWarningModal && (
+                        <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+                            <div className="bg-white rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl text-center">
+                                <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">
+                                    <i className="fa-solid fa-triangle-exclamation"></i>
+                                </div>
+                                <h3 className="text-xl font-bold text-gray-900 mb-2">Plan bereits erstellt!</h3>
+                                <p className="text-gray-600 text-sm leading-relaxed mb-6">
+                                    Für den Zeitraum bis zum <strong>{formatDate(vm.planGeneriertBis)}</strong> wurde der Messdienerplan bereits fest eingeteilt.
+                                    <br/><br/>
+                                    <strong>Wichtig:</strong> Falls du für einen Gottesdienst in diesem Zeitraum eingeteilt bist, kümmere dich bitte <u>selbstständig um eine Vertretung</u>!
+                                    <br/><br/>
+                                    Deine Abwesenheit wird dennoch gespeichert (z. B. für Termine darüber hinaus).
+                                </p>
+                                <div className="space-y-3">
+                                    <button onClick={saveAndFinish} className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3.5 rounded-xl shadow-md transition">
+                                        Trotzdem eintragen
+                                    </button>
+                                    <button onClick={() => setShowWarningModal(false)} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">
+                                        Abbrechen & Prüfen
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         }
@@ -359,7 +486,14 @@
 
         function MobileTopBar({ title }) {
             const vm = useViewModel();
-            return <div className="md:hidden bg-white text-gray-900 p-4 pt-10 flex items-center shadow-sm sticky top-0 z-50 border-b border-gray-200"><button onClick={() => vm.setActiveTab('menu')} className="text-blue-600 hover:text-blue-800 p-2 pl-0"><i className="fa-solid fa-chevron-left text-xl mr-1"></i> Menü</button><h1 className="text-xl font-bold ml-2 flex-1 truncate">{title}</h1></div>;
+            return (
+                <div className="md:hidden bg-white text-gray-900 p-4 pt-10 flex items-center shadow-sm sticky top-0 z-50 border-b border-gray-200 shrink-0">
+                    <button onClick={() => vm.setActiveTab('menu')} className="text-blue-600 hover:text-blue-800 p-2 pl-0 flex items-center font-semibold">
+                        <i className="fa-solid fa-chevron-left text-lg mr-1.5"></i> Menü
+                    </button>
+                    <h1 className="text-xl font-bold ml-2 flex-1 truncate">{title}</h1>
+                </div>
+            );
         }
 
         function Sidebar() {
@@ -537,7 +671,7 @@
                     await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
                     const canvas = document.createElement('canvas'); canvas.width = img.width; canvas.height = img.height; canvas.getContext('2d').drawImage(img, 0, 0);
                     doc.addImage(canvas.toDataURL('image/png'), 'PNG', 88, y, 34, 34); 
-                    y += 50; // FIX: Größerer Abstand zur Überschrift! (Vorher 42)
+                    y += 50;
                 } catch (e) { console.log("Kein Logo gefunden."); y = 20; }
 
                 doc.setFontSize(22); doc.setFont("helvetica", "bold"); doc.text("Einteilung der Messdiener/innen", 105, y, { align: "center" }); y += 16;
@@ -602,57 +736,54 @@
 
             const resetApp = () => { vm.setAppState('upload'); vm.setDienste([]); vm.setPdfFile(null); };
             const bloecke = getChronologischeBloecke();
-            const isMobile = window.innerWidth < 768;
 
             return (
                 <div className="flex flex-col md:flex-row h-full w-full overflow-hidden relative">
                     <MobileTopBar title="Planer" />
                     
-                    {!isMobile && (
-                        <div className={`w-full ${vm.appState === 'review' ? 'lg:w-[500px] xl:w-[600px]' : 'md:w-[320px] lg:w-[380px]'} bg-white p-6 md:p-8 border-b md:border-b-0 md:border-r border-gray-200 shadow-sm z-10 shrink-0 flex flex-col h-auto md:h-full transition-all duration-300`}>
-                            {vm.appState === 'upload' && (
-                                <div className="flex flex-col h-full justify-center">
-                                    <h2 className="text-2xl font-bold text-gray-900 mb-2">1. Pfarrbrief hochladen</h2>
-                                    <p className="text-gray-500 text-sm mb-6">Wähle das PDF aus, um die Termine per KI auszulesen.</p>
-                                    <label className={`w-full py-12 border-4 border-dashed rounded-3xl flex flex-col items-center justify-center cursor-pointer transition ${vm.pdfFile ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50 hover:bg-gray-100'}`}>
-                                        <i className={`fa-solid ${vm.pdfFile ? 'fa-file-circle-check text-blue-500' : 'fa-file-pdf text-gray-400'} text-5xl mb-4`}></i>
-                                        <span className={`text-sm font-bold text-center px-4 ${vm.pdfFile ? 'text-blue-600' : 'text-gray-500'}`}>{vm.pdfFile ? vm.pdfFile.name : 'PDF hierher ziehen'}</span>
-                                        <input type="file" accept="application/pdf" className="hidden" onChange={e => vm.setPdfFile(e.target.files[0])} />
-                                    </label>
-                                    <button onClick={leseGottesdienste} disabled={vm.laedt || !vm.pdfFile} className="mt-6 w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-4 rounded-xl shadow-md transition flex justify-center items-center">
-                                        {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-2"></i> : <i className="fa-solid fa-wand-magic-sparkles mr-2"></i>}{vm.laedt ? vm.ladeStatusText : 'KI Analyse starten'}
-                                    </button>
-                                    {vm.fehlerMeldung && <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-lg text-xs font-bold border border-red-200"><i className="fa-solid fa-triangle-exclamation mr-2"></i>{vm.fehlerMeldung}</div>}
-                                </div>
-                            )}
-                            {vm.appState === 'review' && (
-                                <div className="flex flex-col h-full">
-                                    <h2 className="text-2xl font-bold text-gray-900 mb-2">2. Abgleichen</h2>
-                                    <p className="text-gray-500 text-sm mb-4">Prüfe die erkannten Termine. Klicke auf eine Kachel, um sie zu bearbeiten.</p>
-                                    {vm.pdfFile && (
-                                        <div className="w-full flex-1 mb-4 border border-gray-200 rounded-xl overflow-hidden bg-gray-100">
-                                            <iframe src={URL.createObjectURL(vm.pdfFile)} className="w-full h-full border-none" title="PDF Vorschau"></iframe>
-                                        </div>
-                                    )}
-                                    <div className="flex-shrink-0 space-y-3">
-                                        <button onClick={() => setEditingDienst({id: crypto.randomUUID(), datum: "", wochentag: "", uhrzeit: "", anlass: "Hl. Messe", minis: []})} className="w-full bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-bold py-3 rounded-xl transition shadow-sm"><i className="fa-solid fa-plus mr-2"></i>Termin hinzufügen</button>
-                                        <button onClick={teileEin} disabled={vm.laedt} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-md transition flex justify-center items-center">
-                                            {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-2"></i> : <i className="fa-solid fa-users mr-2"></i>}{vm.laedt ? vm.ladeStatusText : 'Jetzt automatisch Einteilen'}
-                                        </button>
-                                        <button onClick={resetApp} className="w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold py-3 rounded-xl transition">Abbrechen & Neustart</button>
+                    <div className={`w-full md:w-[320px] lg:w-[380px] bg-white p-6 md:p-8 border-b md:border-b-0 md:border-r border-gray-200 shadow-sm z-10 shrink-0 flex flex-col h-auto md:h-full transition-all duration-300`}>
+                        {vm.appState === 'upload' && (
+                            <div className="flex flex-col h-full justify-center">
+                                <h2 className="text-2xl font-bold text-gray-900 mb-2">1. Pfarrbrief hochladen</h2>
+                                <p className="text-gray-500 text-sm mb-6">Wähle das PDF aus, um die Termine per KI auszulesen.</p>
+                                <label className={`w-full py-12 border-4 border-dashed rounded-3xl flex flex-col items-center justify-center cursor-pointer transition ${vm.pdfFile ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50 hover:bg-gray-100'}`}>
+                                    <i className={`fa-solid ${vm.pdfFile ? 'fa-file-circle-check text-blue-500' : 'fa-file-pdf text-gray-400'} text-5xl mb-4`}></i>
+                                    <span className={`text-sm font-bold text-center px-4 ${vm.pdfFile ? 'text-blue-600' : 'text-gray-500'}`}>{vm.pdfFile ? vm.pdfFile.name : 'PDF hierher ziehen'}</span>
+                                    <input type="file" accept="application/pdf" className="hidden" onChange={e => vm.setPdfFile(e.target.files[0])} />
+                                </label>
+                                <button onClick={leseGottesdienste} disabled={vm.laedt || !vm.pdfFile} className="mt-6 w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-4 rounded-xl shadow-md transition flex justify-center items-center">
+                                    {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-2"></i> : <i className="fa-solid fa-wand-magic-sparkles mr-2"></i>}{vm.laedt ? vm.ladeStatusText : 'KI Analyse starten'}
+                                </button>
+                                {vm.fehlerMeldung && <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-lg text-xs font-bold border border-red-200"><i className="fa-solid fa-triangle-exclamation mr-2"></i>{vm.fehlerMeldung}</div>}
+                            </div>
+                        )}
+                        {vm.appState === 'review' && (
+                            <div className="flex flex-col h-full">
+                                <h2 className="text-2xl font-bold text-gray-900 mb-2">2. Abgleichen</h2>
+                                <p className="text-gray-500 text-sm mb-4">Prüfe die erkannten Termine. Klicke auf eine Kachel, um sie zu bearbeiten.</p>
+                                {vm.pdfFile && (
+                                    <div className="w-full flex-1 mb-4 border border-gray-200 rounded-xl overflow-hidden bg-gray-100 hidden md:block">
+                                        <iframe src={URL.createObjectURL(vm.pdfFile)} className="w-full h-full border-none" title="PDF Vorschau"></iframe>
                                     </div>
+                                )}
+                                <div className="flex-shrink-0 space-y-3">
+                                    <button onClick={() => setEditingDienst({id: crypto.randomUUID(), datum: "", wochentag: "", uhrzeit: "", anlass: "Hl. Messe", minis: []})} className="w-full bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-bold py-3 rounded-xl transition shadow-sm"><i className="fa-solid fa-plus mr-2"></i>Termin hinzufügen</button>
+                                    <button onClick={teileEin} disabled={vm.laedt} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-md transition flex justify-center items-center">
+                                        {vm.laedt ? <i className="fa-solid fa-circle-notch fa-spin mr-2"></i> : <i className="fa-solid fa-users mr-2"></i>}{vm.laedt ? vm.ladeStatusText : 'Jetzt automatisch Einteilen'}
+                                    </button>
+                                    <button onClick={resetApp} className="w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold py-3 rounded-xl transition">Abbrechen & Neustart</button>
                                 </div>
-                            )}
-                            {vm.appState === 'assigned' && (
-                                <div className="flex flex-col h-full justify-center">
-                                    <h2 className="text-2xl font-bold text-gray-900 mb-2">3. Fertig!</h2>
-                                    <p className="text-gray-500 text-sm mb-6">Der Plan ist erstellt. Du kannst manuell korrigieren (Klick auf Kachel) oder das PDF herunterladen.</p>
-                                    <button onClick={exportierePDF} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-md transition mb-4"><i className="fa-solid fa-print mr-2"></i>Als PDF exportieren</button>
-                                    <button onClick={resetApp} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">Neuen Plan erstellen</button>
-                                </div>
-                            )}
-                        </div>
-                    )}
+                            </div>
+                        )}
+                        {vm.appState === 'assigned' && (
+                            <div className="flex flex-col h-full justify-center">
+                                <h2 className="text-2xl font-bold text-gray-900 mb-2">3. Fertig!</h2>
+                                <p className="text-gray-500 text-sm mb-6">Der Plan ist erstellt. Du kannst manuell korrigieren (Klick auf Kachel) oder das PDF herunterladen.</p>
+                                <button onClick={exportierePDF} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-md transition mb-4"><i className="fa-solid fa-print mr-2"></i>Als PDF exportieren</button>
+                                <button onClick={resetApp} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition">Neuen Plan erstellen</button>
+                            </div>
+                        )}
+                    </div>
                     
                     <div className="flex-1 bg-gray-50/50 p-4 md:p-10 overflow-y-auto relative md:h-full">
                         {vm.laedt && vm.appState !== 'upload' && <div className="absolute inset-0 z-50 bg-white/60 backdrop-blur-sm flex items-center justify-center"><i className="fa-solid fa-circle-notch fa-spin text-4xl text-blue-500"></i></div>}
@@ -708,7 +839,6 @@
                 const kf = Array.isArray(proz.kinderfahnen) ? proz.kinderfahnen : ["",""];
                 const ko = Array.isArray(proz.kollekte) ? proz.kollekte : ["",""];
                 const frw = Array.isArray(proz.fahneRotWeiss2) ? proz.fahneRotWeiss2 : ["",""];
-                const lat = Array.isArray(proz.laternen) ? proz.laternen : ["",""];
 
                 addLine("Kreuz", proz.kreuz); y += 2; addLine("Fahnen (Grün)", fg[0], fg[1]);
                 y += 6; doc.setFontSize(10); doc.setTextColor(150,150,150); doc.text("--- Männer ---", 105, y, {align:"center"}); y+=6; doc.setFontSize(12); doc.setTextColor(0,0,0);
@@ -738,7 +868,6 @@
                             vm.prozessionen.filter(p => p.id === selectedId).map(proz => {
                                 const update = (field, val) => vm.setProzessionen(vm.prozessionen.map(pr => pr.id === proz.id ? {...pr, [field]: val} : pr));
                                 
-                                // FIX: Arrays extrem sicher machen!
                                 const fg = Array.isArray(proz.fahneGruenWeiss) ? proz.fahneGruenWeiss : ["",""];
                                 const fge = Array.isArray(proz.fahneGelbWeiss1) ? proz.fahneGelbWeiss1 : ["",""];
                                 const fl = Array.isArray(proz.flambeaux) ? proz.flambeaux : ["",""];
@@ -780,11 +909,11 @@
                 </div>
             );
         }
+
         function EventsView() {
             const vm = useViewModel();
             const [selectedId, setSelectedId] = useState(null);
             
-            // Sichere Datums-Sortierung, die nicht mehr abstürzt!
             const sorted = [...(vm.events || [])].sort((a, b) => {
                 const da = vm.parseDateStr(a.datum || "");
                 const db = vm.parseDateStr(b.datum || "");
@@ -821,7 +950,6 @@
                                         </div>
                                         <button onClick={() => { if(confirm("Event löschen?")) { vm.setEvents(vm.events.filter(x => x.id !== ev.id)); setSelectedId(null); } }} className="text-red-500 hover:text-red-700 p-2"><i className="fa-solid fa-trash text-xl"></i></button>
                                     </div>
-                                    {/* Textarea flexibel gemacht, damit keine Texte mehr abgeschnitten werden */}
                                     <textarea value={ev.beschreibung} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, beschreibung: e.target.value} : x))} className="w-full flex-1 min-h-[250px] bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-700 outline-none focus:border-blue-500 mb-8 whitespace-pre-wrap" placeholder="Beschreibung..."></textarea>
                                 </div>
                             ))
@@ -836,7 +964,6 @@
             const [editVormerk, setEditVormerk] = useState(null);
             const wochentage = [{id: 2, n: 'Mo'}, {id: 3, n: 'Di'}, {id: 4, n: 'Mi'}, {id: 5, n: 'Do'}, {id: 6, n: 'Fr'}, {id: 7, n: 'Sa'}, {id: 1, n: 'So'}];
             
-            // Sichere Datums-Sortierung, die nicht mehr abstürzt!
             const sorted = [...(vm.vormerkungen || [])].sort((a, b) => {
                 const da = vm.parseDateStr(a.datum || "");
                 const db = vm.parseDateStr(b.datum || "");
@@ -1177,7 +1304,7 @@
         }
 
         // ==========================================
-        // 6. APP ROUTING
+        // 6. APP ROUTING & VIEWS
         // ==========================================
         function AdminDashboard() {
             const vm = useViewModel();
@@ -1195,9 +1322,26 @@
             ];
             
             return (
-                <div className="min-h-screen bg-[#f2f2f7] p-6 pb-12 flex flex-col antialiased">
-                    <div className="flex justify-between items-end mb-8 pt-8"><h1 className="text-4xl font-black text-gray-900 tracking-tight">Übersicht</h1><button onClick={() => { vm.setRoute('landing'); vm.setAdminPassword(''); }} className="bg-white px-4 py-2 rounded-full shadow-sm text-sm font-bold text-red-500 border border-gray-200"><i className="fa-solid fa-power-off mr-2"></i>Abmelden</button></div>
-                    <div className="grid grid-cols-2 gap-4">{tiles.map(t => (<div key={t.id} onClick={() => vm.setActiveTab(t.id)} className="ios-card p-6 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform"><div className={`w-14 h-14 ${t.color} text-white rounded-full flex items-center justify-center text-2xl mb-3 shadow-md`}><i className={t.icon}></i></div><span className="font-bold text-gray-800 text-[15px]">{t.label}</span></div>))}</div>
+                <div className="min-h-screen w-full bg-[#f2f2f7] p-6 pb-12 flex flex-col antialiased overflow-y-auto">
+                    <div className="flex justify-between items-end mb-8 pt-8 max-w-lg mx-auto w-full">
+                        <div>
+                            <h1 className="text-3xl font-black text-gray-900 tracking-tight">Übersicht</h1>
+                            <p className="text-gray-500 text-sm">Messdiener Planer</p>
+                        </div>
+                        <button onClick={() => { vm.setAdminPassword(''); vm.setRoute('landing'); }} className="bg-white px-4 py-2 rounded-full shadow-sm text-sm font-bold text-red-500 border border-gray-200 hover:bg-red-50 transition">
+                            <i className="fa-solid fa-power-off mr-2"></i>Abmelden
+                        </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 max-w-lg mx-auto w-full">
+                        {tiles.map(t => (
+                            <div key={t.id} onClick={() => vm.setActiveTab(t.id)} className="ios-card p-6 flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform">
+                                <div className={`w-14 h-14 ${t.color} text-white rounded-full flex items-center justify-center text-2xl mb-3 shadow-md`}>
+                                    <i className={t.icon}></i>
+                                </div>
+                                <span className="font-bold text-gray-800 text-[15px] text-center">{t.label}</span>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             );
         }
@@ -1207,22 +1351,35 @@
             const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
             useEffect(() => { const handleResize = () => setIsMobile(window.innerWidth < 768); window.addEventListener('resize', handleResize); return () => window.removeEventListener('resize', handleResize); }, []);
             
-            // Handy-Modus: Überspringt das Dashboard komplett und zeigt direkt den fertigen Planer!
+            // Handy-Ansicht: Navigation über Kacheln & Unterseiten
             if (isMobile) {
+                if (vm.activeTab === 'menu') {
+                    return <AdminDashboard />;
+                }
                 return (
-                    <div className="flex h-screen w-full bg-macBg text-[#1d1d1f] antialiased">
-                        <div className="flex-1 flex flex-col bg-white overflow-hidden z-10 relative">
-                            <PlanerView/>
+                    <div className="flex h-screen w-full bg-white text-[#1d1d1f] antialiased overflow-hidden">
+                        <div className="flex-1 flex flex-col bg-white overflow-hidden relative">
+                            {vm.activeTab === 'planer' && <PlanerView/>}
+                            {vm.activeTab === 'prozessionen' && <ProzessionenView/>}
+                            {vm.activeTab === 'events' && <EventsView/>}
+                            {vm.activeTab === 'vormerken' && <VormerkenView/>}
+                            {vm.activeTab === 'abwesenheiten_admin' && <AbwesenheitenAdminView/>}
+                            {vm.activeTab === 'statistik' && <StatistikView/>}
+                            {vm.activeTab === 'notizen' && <NotizenView/>}
+                            {vm.activeTab === 'werkzeuge' && <WerkzeugeView/>}
+                            {vm.activeTab === 'messdiener' && <MessdienerView/>}
+                            {vm.activeTab === 'einstellungen' && <EinstellungenView/>}
                         </div>
                     </div>
                 );
             }
 
+            // Desktop Browser-Ansicht (mit macOS-Sidebar)
             return (
                 <div className="flex h-screen w-full bg-macBg text-[#1d1d1f] antialiased">
                     <Sidebar/>
                     <div className="flex-1 flex flex-col bg-white overflow-hidden shadow-[-4px_0_15px_rgba(0,0,0,0.05)] z-10 relative">
-                        {vm.activeTab === 'planer' && <PlanerView/>}
+                        {(vm.activeTab === 'planer' || vm.activeTab === 'menu') && <PlanerView/>}
                         {vm.activeTab === 'prozessionen' && <ProzessionenView/>}
                         {vm.activeTab === 'events' && <EventsView/>}
                         {vm.activeTab === 'vormerken' && <VormerkenView/>}
