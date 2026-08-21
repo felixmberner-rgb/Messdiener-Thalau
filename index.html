@@ -993,7 +993,7 @@
                 <div className="flex flex-col md:flex-row h-full w-full overflow-hidden">
                     <MobileTopBar title="Events" />
                     
-                    <div className={`${selectedId ? 'hidden md:flex' : 'flex'} w-full md:w-[300px] bg-white border-r border-gray-200 flex-col h-full z-10 shrink-0`}>
+                    <div className={`${selectedId ? 'hidden md:flex' : 'flex'} w-full md:w-[320px] lg:w-[360px] bg-white border-r border-gray-200 flex-col h-full z-10 shrink-0`}>
                         <div className="p-4 md:p-6">
                             <div className="flex justify-between items-center mb-4">
                                 <h2 className="text-xl md:text-2xl font-bold text-gray-900">Events</h2>
@@ -1008,8 +1008,13 @@
                         <div className="flex-1 overflow-y-auto px-3 pb-6 space-y-2">
                             {sorted.map(e => (
                                 <button key={e.id} onClick={() => setSelectedId(e.id)} className={`w-full text-left px-4 py-3 rounded-xl border transition ${selectedId === e.id ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-gray-50 md:bg-transparent border-gray-200 md:border-transparent hover:bg-gray-100 text-gray-800'}`}>
-                                    <div className="font-bold truncate">{e.titel || "Neues Event"}</div>
-                                    <div className={`text-sm ${selectedId === e.id ? 'text-blue-100' : 'text-gray-500'}`}>{e.datum || "Kein Datum"}</div>
+                                    <div className="font-bold text-base leading-snug break-words">{e.titel || "Neues Event"}</div>
+                                    <div className={`text-xs mt-1 font-medium ${selectedId === e.id ? 'text-blue-100' : 'text-blue-600'}`}>{e.datum || "Kein Datum"}</div>
+                                    {e.beschreibung && (
+                                        <p className={`text-xs mt-1.5 line-clamp-2 break-words leading-relaxed ${selectedId === e.id ? 'text-blue-100/90' : 'text-gray-500'}`}>
+                                            {e.beschreibung}
+                                        </p>
+                                    )}
                                 </button>
                             ))}
                         </div>
@@ -1023,7 +1028,7 @@
                             </div>
                         ) : (
                             vm.events.filter(e => e.id === selectedId).map(ev => (
-                                <div key={ev.id} className="max-w-4xl w-full bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm flex flex-col h-full md:h-auto min-h-[400px]">
+                                <div key={ev.id} className="max-w-4xl w-full bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm flex flex-col h-full md:h-auto min-h-[450px]">
                                     <div className="flex items-center justify-between mb-4 md:hidden">
                                         <button onClick={() => setSelectedId(null)} className="text-blue-600 font-bold flex items-center text-sm">
                                             <i className="fa-solid fa-chevron-left mr-1"></i> Zurück zur Liste
@@ -1031,12 +1036,29 @@
                                     </div>
                                     <div className="flex justify-between items-start mb-6">
                                         <div className="w-full pr-4">
-                                            <input type="text" value={ev.titel} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, titel: e.target.value} : x))} className="text-2xl md:text-4xl font-black text-gray-900 w-full bg-transparent outline-none mb-2" placeholder="Titel..." />
-                                            <input type="text" value={ev.datum} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, datum: e.target.value} : x))} className="text-lg md:text-xl font-bold text-blue-600 w-full bg-transparent outline-none" placeholder="Datum..." />
+                                            <textarea 
+                                                rows="2"
+                                                value={ev.titel} 
+                                                onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, titel: e.target.value} : x))} 
+                                                className="text-2xl md:text-3xl font-black text-gray-900 w-full bg-transparent outline-none mb-2 resize-none leading-tight" 
+                                                placeholder="Titel..." 
+                                            />
+                                            <input 
+                                                type="text" 
+                                                value={ev.datum} 
+                                                onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, datum: e.target.value} : x))} 
+                                                className="text-lg md:text-xl font-bold text-blue-600 w-full bg-transparent outline-none" 
+                                                placeholder="Datum (z.B. 12.10.2026)..." 
+                                            />
                                         </div>
                                         <button onClick={() => { if(confirm("Event löschen?")) { vm.setEvents(vm.events.filter(x => x.id !== ev.id)); setSelectedId(null); } }} className="text-red-500 hover:text-red-700 p-2"><i className="fa-solid fa-trash text-xl"></i></button>
                                     </div>
-                                    <textarea value={ev.beschreibung} onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, beschreibung: e.target.value} : x))} className="w-full flex-1 min-h-[250px] bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-700 outline-none focus:border-blue-500 mb-8 whitespace-pre-wrap" placeholder="Beschreibung..."></textarea>
+                                    <textarea 
+                                        value={ev.beschreibung} 
+                                        onChange={e => vm.setEvents(vm.events.map(x => x.id === ev.id ? {...x, beschreibung: e.target.value} : x))} 
+                                        className="w-full flex-1 min-h-[250px] bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-700 outline-none focus:border-blue-500 mb-6 whitespace-pre-wrap leading-relaxed" 
+                                        placeholder="Beschreibung & Infos zum Event eintragen..."
+                                    ></textarea>
                                 </div>
                             ))
                         )}
